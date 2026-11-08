@@ -1,7 +1,10 @@
 # xphi.node.ops.boot
 import os
 import json
+import signal
+import subprocess
 import asyncio
+from pathlib import Path
 from typing import Optional
 
 from xphi.arch.contract.event.next import EventObserver
@@ -15,7 +18,7 @@ from xphi.state.phase.executor.cont import SwarmExecutor
 from xphi.state.phase.executor.flow import FlowExecutor
 from xphi.state.phase.reactor import PhaseReactor
 
-from xphi.state.anchor.store import AnchorStore, AnchorRole
+from xphi.state.anchor.store import AnchorStore, AnchorRole, ANCHOR_DB_PATH
 
 from xphi.node.runtime.anchor import RuntimeAnchor
 from xphi.node.space.tunnel.factory import TunnelFactory
@@ -29,6 +32,39 @@ log = get_emitter("node.ops.boot")
 
 _node_instance: Optional[RuntimeAnchor] = None
 _background_tasks = set()
+
+
+async def _acquire_sealer_store() -> AnchorStore:
+    store = AnchorStore()
+    if store.role == AnchorRole.SEALER:
+        return store
+
+    lock_file = Path(ANCHOR_DB_PATH) / "LOCK"
+    log.warning(f"[Boot] Master node failed to acquire SEALER lock on {lock_file}. Inspecting holder PIDs...")
+    store.close()
+
+    my_pid = os.getpid()
+    try:
+        out = subprocess.check_output(["lsof", "-t", str(lock_file)], text=True).strip()
+        holder_pids = [int(p) for p in out.splitlines() if p.strip().isdigit() and int(p) != my_pid]
+    except Exception:
+        holder_pids = []
+
+    for pid in holder_pids:
+        log.warning(f"[Boot] Stale DB lock at {lock_file} held by PID {pid}. Sending SIGKILL...")
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    if holder_pids:
+        await asyncio.sleep(0.3)
+
+    store = AnchorStore()
+    if store.role != AnchorRole.SEALER:
+        raise RuntimeError(f"[Boot] Critical: Failed to acquire SEALER role on {lock_file} after evicting {holder_pids}.")
+    return store
+
 
 class PhaseSignal(EventObserver):
     def __init__(self, event_bus: AsyncEventBus):
@@ -80,6 +116,7 @@ class PhaseSignal(EventObserver):
             await self.bus.publish(psi_event)
         except Exception as e:
             self.log.error(f"[PhaseBridge] Dispatch failed for {original_msg}: {e}", exc_info=True)
+
 
 class RoutingExecutor(BaseExecutor):
     def __init__(self, completion_signal: asyncio.Event):
@@ -160,8 +197,8 @@ async def main_async():
     log.info(f"[Boot] Provisioning Shared WASM Broker (Timeout: {wasm_timeout}s)...")
     shared_broker = WasmBroker.get_shared(timeout=wasm_timeout, tunnel_factory=TunnelFactory)
 
-    log.info("[Boot] Initializing AnchorStore and injecting Shared Broker...")
-    store = AnchorStore()
+    log.info("[Boot] Initializing AnchorStore and enforcing SEALER lock...")
+    store = await _acquire_sealer_store()
     
     log.info("[Boot] Igniting Embedded Phase Runtime Node...")
     completion_signal = asyncio.Event()
@@ -177,6 +214,7 @@ async def main_async():
     log.info("[Boot] Entering observation mode (External layers delegated to Daemons).")
     await _node_instance.wait_until_stopped()
 
+
 async def teardown():
     global _node_instance
     log.info("[Boot] Releasing system resources...")
@@ -188,8 +226,9 @@ async def teardown():
             task.cancel()
 
     try:
-        AnchorStore().close()
-        log.info("[Boot] AnchorStore lock safely released.")
+        if AnchorStore._instance is not None:
+            AnchorStore._instance.close()
+            log.info("[Boot] AnchorStore lock safely released.")
     except Exception as e:
         log.warning(f"[Boot] Error while releasing AnchorStore lock: {e}")
 

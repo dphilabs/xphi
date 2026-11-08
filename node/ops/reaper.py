@@ -18,8 +18,8 @@ DEFAULT_TARGET_TAGS = [
     "xphi.node",
     "dphi",
     "deno",
-    "fiber.infra.mcp.worker",
-    "dev.e2e",
+    "fiber",
+    "fiber.plane.mcp.worker",
     "multiprocessing.spawn",
     "multiprocessing.resource_tracker"
 ]
