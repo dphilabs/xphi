@@ -6,26 +6,39 @@ import socket
 import asyncio
 import threading
 import subprocess
+import contextvars
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Type, Any
-from contextlib import asynccontextmanager, AsyncExitStack
+from typing import Type, Any, Tuple
+from contextlib import asynccontextmanager, contextmanager
 import httpx
 
 from xphi.arch.bound.scope.local.llama import LlamaServer
-
 from xphi.arch.contract.config.env import DEFAULT_GATEWAY_PORT
 from xphi.node.space.tunnel.factory import TunnelFactory
 from xphi.watcher.plane.emitter import get_emitter
-from xphi.watcher.plane.tracer.scope import scope_trace, get_current_trace_path
 
 log = get_emitter("scope.manager")
+
+_scope_stack: contextvars.ContextVar[Tuple[str, ...]] = contextvars.ContextVar("scope_stack", default=())
+
+@contextmanager
+def scope_trace(name: str, facet: str):
+    token = _scope_stack.set(_scope_stack.get() + (f"[{facet}:{name}]",))
+    try:
+        yield
+    finally:
+        _scope_stack.reset(token)
+
+def get_current_trace_path() -> str:
+    stack = _scope_stack.get()
+    return " -> ".join(stack) if stack else "[root]"
 
 def get_free_port(starting_port: int, max_port: int = 8999) -> int:
     for port in range(starting_port, max_port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
-                sock.bind(('127.0.0.1', port))
+                sock.bind(("127.0.0.1", port))
                 return port
             except OSError:
                 continue
@@ -43,15 +56,15 @@ class SurfaceConfig:
 
 class BaseSurface(ABC):
     @abstractmethod
-    async def up(self) -> None: 
+    async def up(self) -> None:
         pass
 
     @abstractmethod
-    async def down(self) -> None: 
+    async def down(self) -> None:
         pass
 
     @abstractmethod
-    def get_engine(self) -> Any: 
+    def get_engine(self) -> Any:
         pass
 
 
@@ -82,9 +95,9 @@ class SandboxSurface(BaseSurface):
         self._stop_event = threading.Event()
         self.threads = []
         self.llm_engine = LlamaServer()
-        
+
         self.process_name = "sandbox.surface"
-        self._launcher_module = None 
+        self._launcher_module = None
         self.registry_key = "system:sandbox:pids"
 
     def stream_output(self, pipe, prefix: str):
@@ -108,19 +121,24 @@ class SandboxSurface(BaseSurface):
         log.info(f"[*] Booting Sandbox Surface on {self.base_url}...")
         self.llm_engine.ensure_server()
 
-        cmd_str = f"exec -a {self.process_name} {sys.executable} -m {self._launcher_module} --host {self.config.host} --port {self.config.port}"
+        cmd_str = (
+            f"exec -a {self.process_name} {sys.executable} -m {self._launcher_module} "
+            f"--host {self.config.host} --port {self.config.port}"
+        )
         cmd = ["bash", "-c", cmd_str]
-        
+
         env_vars = {**os.environ, "LOG_JSON": "true", "PYTHONUNBUFFERED": "1"}
         self.process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE if self.config.show_logs else subprocess.DEVNULL,
             stderr=subprocess.PIPE if self.config.show_logs else subprocess.DEVNULL,
-            text=True, env=env_vars, bufsize=1
+            text=True,
+            env=env_vars,
+            bufsize=1,
         )
 
         pid = self.process.pid
-        
+
         try:
             tunnel = await TunnelFactory.get_default()
             await tunnel.sadd(self.registry_key, pid)
@@ -137,7 +155,7 @@ class SandboxSurface(BaseSurface):
 
         start_time = time.time()
         ready = False
-        
+
         async with httpx.AsyncClient() as client:
             while time.time() - start_time < self.config.timeout:
                 if self.process.poll() is not None:
@@ -149,7 +167,7 @@ class SandboxSurface(BaseSurface):
                         break
                 except (httpx.RequestError, httpx.ConnectError):
                     pass
-                
+
                 await asyncio.sleep(0.3)
 
         if not ready:
@@ -163,34 +181,40 @@ class SandboxSurface(BaseSurface):
             log.info("[*] Folding Sandbox Surface (Teardown)...")
             self._stop_event.set()
             self.process.terminate()
-            
+
             try:
                 await asyncio.wait_for(asyncio.to_thread(self.process.wait), timeout=5.0)
             except asyncio.TimeoutError:
                 self.process.kill()
-            
+
             try:
                 tunnel = await TunnelFactory.get_default()
                 await tunnel.srem(self.registry_key, self.process.pid)
                 log.info(f"[+] Unregistered Sandbox PID {self.process.pid} from {self.registry_key}")
             except Exception as e:
                 log.debug(f"[-] State Store cleanup skipped or failed: {e}")
-                
+
             log.info("[+] Sandbox Surface process terminated.")
 
     def get_engine(self) -> Any:
         return lambda agent_usage: self.llm_engine
 
+
+# ============================================================================
+# 3. Surface Registry & Lifecycle Manager
+# ============================================================================
 SURFACE_REGISTRY = {
     "local": LocalSurface,
-    "sandbox": SandboxSurface
+    "sandbox": SandboxSurface,
 }
+
 
 def get_surface_class(surface_type: str) -> Type[BaseSurface]:
     surface_class = SURFACE_REGISTRY.get(surface_type)
     if not surface_class:
         raise ValueError(f"Unknown surface type: {surface_type}")
     return surface_class
+
 
 class SurfaceManager:
     def __init__(self, config: SurfaceConfig):
@@ -201,7 +225,7 @@ class SurfaceManager:
         except (ImportError, AttributeError, ValueError) as e:
             log.warning(f"Failed to load '{surface_type}' Surface: {e}. Fallback to default 'local' environment.")
             surface_class = get_surface_class("local")
-            
+
         self.impl = surface_class(config)
 
     async def up(self):
@@ -209,25 +233,24 @@ class SurfaceManager:
 
     async def down(self):
         await self.impl.down()
-    
+
     def get_engine(self):
         return self.impl.get_engine()
+
 
 @asynccontextmanager
 async def managed_scope(**surface_kwargs):
     config = SurfaceConfig(**surface_kwargs)
     manager = SurfaceManager(config)
-    
+
     facet_type = "logical" if config.surface_type == "local" else "infra"
     surface_name = manager.impl.__class__.__name__.replace("Surface", "").lower()
-    
-    async with AsyncExitStack() as stack:
-        await stack.enter_async_context(scope_trace(name=surface_name, facet=facet_type))
+
+    with scope_trace(name=surface_name, facet=facet_type):
         log.info(f"[*] Entered Trace Path: {get_current_trace_path()}")
-        
         try:
             await manager.up()
-            yield manager 
+            yield manager
         except Exception as e:
             log.error(f"[managed_scope] pipeline exception: {type(e).__name__} - {e}")
             raise

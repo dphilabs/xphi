@@ -1,4 +1,5 @@
-# xphi.state.topos.transition
+# xphi.state.settlement.transition
+## @lineage: xphi.state.topos.transition
 import asyncio
 import json
 import time
@@ -8,7 +9,7 @@ from typing import Dict, Any, Optional, List
 
 from xphi.arch.contract.event.next import next_id
 from xphi.arch.bound.adapter.pta import NodeSigner
-from xphi.arch.bound.adapter.settlement import ClearingAdapter, TransactionReceipt
+from xphi.state.settlement.mandate import ClearingAdapter, TransactionReceipt
 from xphi.arch.bound.adapter.state import StateAdapter
 from xphi.node.runtime.wasm.broker import WasmBroker
 from xphi.node.runtime.wasm.quota import Tier

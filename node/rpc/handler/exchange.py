@@ -33,7 +33,7 @@ async def handle_invoice_issue(params: dict, ctx: WorkerContext) -> dict:
     if not all([payee_address, amount_usdc, resource_id]): return _build_error(422, "Missing required invoice parameters")
 
     try:
-        from xphi.arch.bound.adapter.settlement import MandateAdapter
+        from xphi.state.settlement.mandate import MandateAdapter
         invoice = MandateAdapter.build_payment_invoice(payee_address=payee_address, amount_usdc=amount_usdc, resource_id=resource_id)
         return {"status": "INVOICE_ISSUED", "invoice": invoice.model_dump() if hasattr(invoice, "model_dump") else invoice.__dict__}
     except Exception as e:

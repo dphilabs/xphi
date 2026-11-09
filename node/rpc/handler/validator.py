@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from xphi.arch.contract.protocol.rpc import WorkerContext, _build_error
 from xphi.arch.contract.config.env import XPHI_ENV
-from xphi.arch.bound.adapter.settlement import MandateAdapter, Ap2MandateResult, SettlementReceipt
+from xphi.state.settlement.mandate import MandateAdapter, Ap2MandateResult, SettlementReceipt
 from xphi.arch.bound.adapter.pta import NodeSigner
 
 from xphi.node.space.bind.resolver import resolve_path

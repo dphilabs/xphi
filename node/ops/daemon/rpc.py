@@ -14,7 +14,7 @@ from typing import Optional, Dict, Callable, List, Any
 from xphi.arch.contract.protocol.rpc import WorkerContext
 from xphi.arch.contract.config import env
 from xphi.arch.contract.registry.unified import contract
-from xphi.arch.bound.adapter.settlement import ClearingAdapter
+from xphi.state.settlement.mandate import ClearingAdapter
 from xphi.arch.bound.adapter.pta import PtaAdapter
 from xphi.arch.bound.adapter.pta import NodeSigner
 from xphi.arch.model.schema.audit import LogstEvent

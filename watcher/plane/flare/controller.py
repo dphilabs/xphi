@@ -12,7 +12,8 @@ from xphi.node.runtime.wasm.broker import WasmBroker
 from xphi.node.space.bind.resolver import resolve_path
 from xphi.watcher.plane.emitter import get_emitter, flow_scope
 from xphi.watcher.plane.flare.tunnel import FlareTunnelFactory
-from xphi.watcher.plane.tracer.base import BaseStreamAuditor, SystemBound, log_streamer
+from xphi.watcher.plane.tracer.base import BaseStreamAuditor, SystemBound
+from xphi.watcher.plane.tracer.op import log_streamer
 
 TIME_ROOT = resolve_path("time")
 EDGE_WORKSPACE_ROOT = resolve_path("flaretime")
