@@ -93,7 +93,6 @@ class SurfaceEmitter:
         current_weight = _LEVEL_WEIGHTS.get(level.upper(), 30)
         min_weight = _LEVEL_WEIGHTS.get(_GLOBAL_MIN_LEVEL, 30)
         
-        # [필터링] 현재 로그의 가중치가 전역 설정보다 낮으면 즉시 무시 (성능 최적화)
         if current_weight < min_weight:
             return
 
