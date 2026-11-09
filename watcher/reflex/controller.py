@@ -1,4 +1,5 @@
-# xphi.node.runtime.phase
+# xphi.watcher.reflex.controller
+## @lineage: xphi.watcher.reflexor.controller
 import json
 from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,7 +21,7 @@ from xphi.arch.contract.fsm import (
     CompactKey,
     CompiledBundle,
 )
-from xphi.node.runtime.fsm.barrier import (
+from xphi.watcher.reflex.barrier import (
     BranchCursor,
     DagJoinBarrier,
     DagTopology,

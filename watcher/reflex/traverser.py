@@ -1,9 +1,10 @@
-# xphi.node.runtime.fsm.traverser
+# xphi.watcher.reflex.traverser
+## @lineage: xphi.node.runtime.fsm.traverser
 from dataclasses import dataclass, field, replace
 from typing import Dict, Any, List, Optional, Callable, Awaitable, Tuple, Sequence, Union
 
-from xphi.arch.xor.fsm.compiler import FSMCompiler, CompiledBundle, CompactKey
-from xphi.node.runtime.phase import BranchController, BranchCursor, DagJoinBarrier
+from xphi.watcher.reflex.compiler import FSMCompiler, CompiledBundle, CompactKey
+from xphi.watcher.reflex.controller import BranchController, BranchCursor, DagJoinBarrier
 from xphi.node.runtime.wasm.broker import WasmBroker
 from xphi.watcher.plane.emitter import get_emitter
 

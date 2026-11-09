@@ -1,4 +1,5 @@
-# xphi.node.runtime.fsm.barrier
+# xphi.watcher.reflex.barrier
+## @lineage: xphi.node.runtime.fsm.barrier
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
