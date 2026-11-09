@@ -1,5 +1,5 @@
-# xphi.state.topos.workflow
-## @lineage: xphi.arch.contract.workflow
+# xphi.arch.model.workflow
+## @lineage: xphi.state.topos.workflow
 import asyncio
 import inspect
 import sys
@@ -8,7 +8,7 @@ import types
 from functools import wraps
 
 from xphi.watcher.plane.emitter import get_emitter
-from xphi.state.topos.node.gan import GanNode, Message
+from xphi.watcher.reflex.node.gan import GanNode, Message
 
 log = get_emitter("topos.workflow")
 

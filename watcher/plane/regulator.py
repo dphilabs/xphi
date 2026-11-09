@@ -14,9 +14,9 @@ from xphi.arch.contract.event.next import LogEvent, next_phase_id, EventObserver
 from xphi.node.space.bind.resolver import resolve_path
 
 from xphi.watcher.observer.metric.trajectory import Point, WindowedTrajectory, DefaultBoundLensStrategy
-from xphi.watcher.surface.tunnel import TunnelSurface
-from xphi.watcher.surface.console import ConsoleSurface
-from xphi.watcher.surface.file import TextFileSurface, JsonFileSurface
+from xphi.watcher.plane.surface.tunnel import TunnelSurface
+from xphi.watcher.plane.surface.console import ConsoleSurface
+from xphi.watcher.plane.surface.file import TextFileSurface, JsonFileSurface
 
 log = logging.getLogger("plane.regulator")
 

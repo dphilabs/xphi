@@ -1,4 +1,5 @@
-# xphi.state.topos.node.gan
+# xphi.watcher.reflex.node.gan
+## @lineage: xphi.state.topos.node.gan
 """
 @desc: Foundational Actor model defining structural topology, message bubbling, and deterministic lifecycle management
 """

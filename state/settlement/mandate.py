@@ -1,4 +1,5 @@
-# xphi.arch.bound.adapter.settlement
+# xphi.state.settlement.mandate
+## @lineage: xphi.arch.bound.adapter.settlement
 import os
 import time
 import json

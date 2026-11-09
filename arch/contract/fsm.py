@@ -1,5 +1,4 @@
 # xphi.arch.contract.fsm
-## @lineage: meta.fsm.phase.contract
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple

@@ -1,5 +1,4 @@
-# xphi.watcher.reflex.compiler
-## @lineage: xphi.arch.xor.fsm.compiler
+# xphi.arch.xor.fsm.compiler
 import hashlib
 from typing import List, Dict, Any, Optional, Union, Set, Tuple
 

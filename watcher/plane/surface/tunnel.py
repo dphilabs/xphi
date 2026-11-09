@@ -1,4 +1,5 @@
-# xphi.watcher.surface.tunnel
+# xphi.watcher.plane.surface.tunnel
+## @lineage: xphi.watcher.surface.tunnel
 import json
 import time
 import sys
@@ -11,9 +12,7 @@ from xphi.arch.contract.event.next import LogEvent, EventObserver
 DAEMON_PORT: int = 8356
 CONSOLE_PORT: int = 8357
 
-
 def _is_control_plane_active( check_interval: float = 2.0, _cache: dict = {"ts": 0.0, "active": False} ) -> bool:
-    """데몬(:8356) 또는 콘솔(:8357) 포트가 열려 있는지 2초 주기로 경량 체크합니다."""
     now = time.time()
     if now - _cache["ts"] < check_interval:
         return _cache["active"]
@@ -38,7 +37,6 @@ class TunnelSurface(EventObserver):
         self._queue = queue.Queue()
         self._worker_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
-        # [수정 1] __init__ 시점의 무조건적인 스레드 기동(self._ensure_worker) 제거
 
     def _ensure_worker(self):
         with self._lock:
@@ -56,7 +54,6 @@ class TunnelSurface(EventObserver):
 
         while True:
             try:
-                # [수정 2] 큐에 실제 보낼 데이터가 들어올 때까지 TunnelFactory.get_sync() 호출 지연
                 batch = []
                 try:
                     channel, msg = self._queue.get(timeout=self.flush_interval)

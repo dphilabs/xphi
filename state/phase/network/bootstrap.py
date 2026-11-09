@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import Optional
 
 from xphi.arch.xor.parser.ruleset.engine import StreamTaggingParser
-from xphi.watcher.plane.tracer.base import SystemBound, log_streamer
 from xphi.node.space.tunnel.surface import EchoListener
+from xphi.watcher.plane.tracer.base import SystemBound
+from xphi.watcher.plane.tracer.op import log_streamer
 from xphi.watcher.plane.emitter import get_emitter
 
 log_flow = get_emitter("phase.network.bootstrap")
