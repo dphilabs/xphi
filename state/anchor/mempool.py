@@ -6,7 +6,6 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-import redis.exceptions
 from xphi.node.space.tunnel.factory import TunnelFactory, UniversalFacade, UniversalFacadeSync
 from xphi.state.anchor.key import KeyGen, LogicStream, SealedKernel
 from xphi.watcher.plane.emitter import get_emitter
@@ -100,7 +99,7 @@ class MempoolRelay:
                 _, raw_val = res
                 self.sync_tunnel.delete(ack_key)
                 return json.loads(raw_val)
-        except redis.exceptions.TimeoutError:
+        except TimeoutError:
             pass
         except Exception as e:
             log.warning(f"[Mempool:ACK] Sync ACK wait error ({req_id[:8]}): {e}")
@@ -122,7 +121,7 @@ class MempoolRelay:
                     _, raw_val = res
                     await async_tunnel.delete(ack_key)
                     return json.loads(raw_val)
-        except redis.exceptions.TimeoutError:
+        except TimeoutError:
             pass
         except Exception as e:
             log.warning(f"[Mempool:ACK] Async ACK wait error ({req_id[:8]}): {e}")
@@ -164,7 +163,7 @@ class MempoolRelay:
         for topic in topics:
             try:
                 tunnel.xgroup_create(topic, self.CONSUMER_GROUP, id="0", mkstream=True)
-            except redis.exceptions.ResponseError as e:
+            except Exception as e:
                 if "BUSYGROUP" not in str(e):
                     raise
 
@@ -194,7 +193,7 @@ class MempoolRelay:
                 for stream_name, messages in events:
                     for msg_id, fields in messages:
                         self._handle_message_sync(consumer_tunnel, stream_name, msg_id, fields)
-            except redis.exceptions.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception as e:
                 if not self._running:

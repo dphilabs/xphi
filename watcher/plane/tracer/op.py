@@ -5,8 +5,6 @@ from typing import List, Tuple, Optional, Any
 
 
 class ExecutorOp:
-    """@desc: PhaseOp와 LifecycleOp의 시퀀스/단일 실행 및 템플릿 렌더링을 통합 관리하는 코어 엔진"""
-
     @staticmethod
     def render_cmd(cmd_template: list, instance: Any) -> list:
         return [
@@ -30,7 +28,7 @@ class ExecutorOp:
         capture: bool = False,
         strict: bool = True,
     ) -> Tuple[bool, int, str, str]:
-        if getattr(instance, "rupture_confirmed", False):
+        if getattr(instance, "is_halted", False):
             instance.log.warning(f"## @{phase_name}.aborted: Rupture already confirmed.")
             return False, -1, "", "Rupture already confirmed"
 
@@ -41,7 +39,7 @@ class ExecutorOp:
         code, out, err = await instance.boundary.run_command(actual_cmd, cwd=actual_cwd, capture=capture)
         if strict and code != 0:
             instance.log.crit(f"## @{phase_name}.fault: (Code {code}) {err}")
-            instance.rupture_confirmed = True
+            instance.is_halted = True
             return False, code, out, err
 
         return True, code, out, err
@@ -54,13 +52,13 @@ class ExecutorOp:
         cwd: str = ".",
         strict: bool = True,
     ) -> bool:
-        if getattr(instance, "rupture_confirmed", False):
+        if getattr(instance, "is_halted", False):
             instance.log.warning(f"## @{phase_name}.aborted: Rupture already confirmed.")
             return False
 
         actual_cwd = ExecutorOp.render_cwd(cwd, instance)
         for i, cmd_template in enumerate(cmds, 1):
-            if getattr(instance, "rupture_confirmed", False):
+            if getattr(instance, "is_halted", False):
                 return False
 
             actual_cmd = ExecutorOp.render_cmd(cmd_template, instance)
@@ -69,7 +67,7 @@ class ExecutorOp:
             code, _, err = await instance.boundary.run_command(actual_cmd, cwd=actual_cwd, capture=False)
             if strict and code != 0:
                 instance.log.crit(f"## @{phase_name}.fault at step {i}: (Code {code}) {err}")
-                instance.rupture_confirmed = True
+                instance.is_halted = True
                 return False
         return True
 

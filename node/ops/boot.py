@@ -1,14 +1,20 @@
 # xphi.node.ops.boot
 import os
-import json
+import shutil
 import signal
+import socket
 import subprocess
 import asyncio
 from pathlib import Path
 from typing import Optional
 
-from xphi.arch.contract.event.next import EventObserver
-from xphi.arch.contract.event.next import LogEvent
+from xphi.arch.contract.config.tunnel import (
+    KV_DIR,
+    RUN_DIR,
+    TUNNEL_PID_PATH,
+    TUNNEL_SOCK_PATH,
+)
+from xphi.arch.contract.event.next import EventObserver, LogEvent
 from xphi.arch.contract.event.psi import PsiEvent, PsiCarrier, CarrierType
 from xphi.arch.contract.event.bus import AsyncEventBus
 from xphi.arch.contract.registry.unified import registry
@@ -31,7 +37,110 @@ from xphi.watcher.receptor.bootstrap import receptor_bootstrap
 log = get_emitter("node.ops.boot")
 
 _node_instance: Optional[RuntimeAnchor] = None
+_valkey_proc: Optional[asyncio.subprocess.Process] = None
 _background_tasks = set()
+
+
+def _resolve_valkey_bin() -> str:
+    """Resolves bundled valkey-server binary from valkeylite or system PATH."""
+    try:
+        import valkeylite
+        pkg_dir = Path(valkeylite.__file__).resolve().parent
+        for candidate in pkg_dir.rglob("valkey-server"):
+            if os.access(candidate, os.X_OK):
+                return str(candidate)
+    except ImportError:
+        pass
+
+    sys_bin = shutil.which("valkey-server")
+    if sys_bin:
+        return sys_bin
+    raise RuntimeError("valkey-server binary not found. Install 'valkeylite'.")
+
+def _ping_unix_socket(sock_path: Path) -> bool:
+    if not sock_path.exists():
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            s.connect(str(sock_path))
+            s.sendall(b"*1\r\n$4\r\nPING\r\n")
+            return s.recv(16).startswith(b"+PONG")
+    except OSError:
+        return False
+
+def _cleanup_stale_valkey() -> None:
+    if TUNNEL_PID_PATH.exists():
+        try:
+            pid = int(TUNNEL_PID_PATH.read_text(encoding="utf-8").strip())
+            cmd_out = subprocess.check_output(["ps", "-p", str(pid), "-o", "comm="], text=True).strip()
+            if "valkey" in cmd_out:
+                log.warning(f"[Boot] Terminating stale embedded Valkey (PID {pid})...")
+                os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        TUNNEL_PID_PATH.unlink(missing_ok=True)
+    TUNNEL_SOCK_PATH.unlink(missing_ok=True)
+
+
+async def ensure_embedded_valkey() -> None:
+    global _valkey_proc
+    if _ping_unix_socket(TUNNEL_SOCK_PATH):
+        log.info(f"[Boot] Reusing active tunnel socket at {TUNNEL_SOCK_PATH}")
+        return
+
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    KV_DIR.mkdir(parents=True, exist_ok=True)
+    _cleanup_stale_valkey()
+
+    valkey_bin = _resolve_valkey_bin()
+    cmd = [
+        valkey_bin,
+        "--port", "0",
+        "--unixsocket", str(TUNNEL_SOCK_PATH),
+        "--unixsocketperm", "700",
+        "--pidfile", str(TUNNEL_PID_PATH),
+        "--dir", str(KV_DIR),
+        "--appendonly", "no",
+        "--save", "",
+    ]
+
+    log.info(f"[Boot] Starting embedded Valkey on {TUNNEL_SOCK_PATH}...")
+    _valkey_proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    for _ in range(50):
+        if _ping_unix_socket(TUNNEL_SOCK_PATH):
+            log.info(f"[Boot] Embedded Valkey ready (PID {_valkey_proc.pid}).")
+            return
+        if _valkey_proc.returncode is not None:
+            err = (await _valkey_proc.stderr.read()).decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"[Boot] Embedded Valkey exited prematurely: {err}")
+        await asyncio.sleep(0.05)
+
+    raise RuntimeError(f"[Boot] Timed out waiting for Valkey socket at {TUNNEL_SOCK_PATH}")
+
+
+async def stop_embedded_valkey() -> None:
+    global _valkey_proc
+    if _valkey_proc is None:
+        return
+
+    if _valkey_proc.returncode is None:
+        log.info(f"[Boot] Stopping embedded Valkey (PID {_valkey_proc.pid})...")
+        _valkey_proc.terminate()
+        try:
+            await asyncio.wait_for(_valkey_proc.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            _valkey_proc.kill()
+            await _valkey_proc.wait()
+
+    TUNNEL_SOCK_PATH.unlink(missing_ok=True)
+    TUNNEL_PID_PATH.unlink(missing_ok=True)
+    _valkey_proc = None
 
 
 async def _acquire_sealer_store() -> AnchorStore:
@@ -74,31 +183,31 @@ class PhaseSignal(EventObserver):
     def update(self, event: LogEvent) -> None:
         if event.level != "SIGNAL":
             return
-            
+
         event_message = str(event.message).strip()
         payload = event.context.copy() if event.context else {}
         payload.update({
             "bridged_from": "Surface.LogEvent",
-            "original_source": getattr(event, 'source_id', 'unknown'),
-            "boundary": "surface_to_kernel"
+            "original_source": getattr(event, "source_id", "unknown"),
+            "boundary": "surface_to_kernel",
         })
 
         carrier = PsiCarrier(
-            kind="SIGNAL",          
-            tag=event_message,      
+            kind="SIGNAL",
+            tag=event_message,
             payload=payload,
-            carrier_type=CarrierType.FIXED
+            carrier_type=CarrierType.FIXED,
         )
 
         psi_event = PsiEvent(
             event_id=event.event_id,
-            parent_id=getattr(event, 'parent_id', None),
-            source_id="phase.bridge", 
-            scope=getattr(event, 'scope', 'GLOBAL'),
-            tick=getattr(event, 'tick', 0) or 0,
-            phase_id=getattr(event, 'phase_id', 0),
+            parent_id=getattr(event, "parent_id", None),
+            source_id="phase.bridge",
+            scope=getattr(event, "scope", "GLOBAL"),
+            tick=getattr(event, "tick", 0) or 0,
+            phase_id=getattr(event, "phase_id", 0),
             carrier=carrier,
-            context={"domain": "boundary.crossing"}
+            context={"domain": "boundary.crossing"},
         )
 
         try:
@@ -111,7 +220,7 @@ class PhaseSignal(EventObserver):
 
     async def _async_dispatch(self, psi_event: PsiEvent, original_msg: str):
         try:
-            symbol = getattr(psi_event, 'symbol', original_msg)
+            symbol = getattr(psi_event, "symbol", original_msg)
             self.log.trace(f"[PhaseBridge] Elevating SIGNAL -> Psi: {symbol}")
             await self.bus.publish(psi_event)
         except Exception as e:
@@ -137,7 +246,7 @@ class RoutingExecutor(BaseExecutor):
         self.flow_executor.node = value
 
     async def execute(self, psi) -> list:
-        if not hasattr(psi, 'carrier') or psi.carrier.kind != "COMMAND":
+        if not hasattr(psi, "carrier") or psi.carrier.kind != "COMMAND":
             return []
 
         context = psi.carrier.payload.get("_context", {})
@@ -159,10 +268,12 @@ class RoutingExecutor(BaseExecutor):
 
 async def main_async():
     global _node_instance
-    
+
     log.info("[Boot] Initiating Control Plane (Master Watcher)...")
+    await ensure_embedded_valkey()
+
     system_bus = AsyncEventBus()
-    
+
     bridge_watcher = PhaseSignal(event_bus=system_bus)
     default_plane.attach(bridge_watcher)
 
@@ -174,7 +285,7 @@ async def main_async():
     log.info("[Boot] Waiting for module discovery and registry sync...")
     active_daemons_str = os.getenv("NODE_DAEMONS", "")
     active_daemons = [d.strip() for d in active_daemons_str.split(",") if d.strip()]
-    
+
     wait_timeout = 30.0
     elapsed = 0.0
     poll_interval = 0.2
@@ -184,7 +295,7 @@ async def main_async():
             if all(d in discovered for d in active_daemons):
                 log.info(f"[Boot] Registry sync verified in {elapsed:.1f}s. Proceeding to ignite node...")
                 break
-                
+
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
         else:
@@ -199,15 +310,15 @@ async def main_async():
 
     log.info("[Boot] Initializing AnchorStore and enforcing SEALER lock...")
     store = await _acquire_sealer_store()
-    
+
     log.info("[Boot] Igniting Embedded Phase Runtime Node...")
     completion_signal = asyncio.Event()
     executor = RoutingExecutor(completion_signal)
-    
+
     _node_instance = RuntimeAnchor(executor=executor)
     _node_instance.tunnel = tunnel
     _node_instance.broker = shared_broker
-    
+
     await _node_instance.start()
 
     log.info("[Boot] Control Plane and Embedded Node fully operational.")
@@ -218,7 +329,7 @@ async def main_async():
 async def teardown():
     global _node_instance
     log.info("[Boot] Releasing system resources...")
-    if _node_instance and getattr(_node_instance, 'running', False):
+    if _node_instance and getattr(_node_instance, "running", False):
         await _node_instance.shutdown()
 
     for task in list(_background_tasks):
@@ -238,9 +349,11 @@ async def teardown():
             log.info("[Boot] Shared WASM Broker closed cleanly.")
         except Exception as e:
             log.warning(f"[Boot] Error while closing Shared WASM Broker: {e}")
-        
+
     await TunnelFactory.close_all()
+    await stop_embedded_valkey()
     log.info("[Boot] Resource cleanup complete.")
+
 
 if __name__ == "__main__":
     PhaseReactor.ignite(main_coro_func=main_async, teardown_hook=teardown)

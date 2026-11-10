@@ -15,14 +15,14 @@ from xphi.watcher.plane.emitter import get_emitter
 class SurfaceSensor:
     """
     @role: External state observer
-    @desc: 스웜 외부 표면(Redis/Tunnel)의 상태 변화를 감지하고 이벤트를 발생시킵니다.
+    @desc: 스웜 외부 표면(Tunnel)의 상태 변화를 감지하고 이벤트를 발생시킵니다.
     """
     def __init__(self, tunnel: UniversalFacade):
         self.tunnel = tunnel
         self.prefix = "sensor:watcher"
         self.keylist = f"{self.prefix}:keylist"
         
-        self.root_dir = resolve_path("io") / "redis"
+        self.root_dir = resolve_path("io") / "tunnel"
         self.pattern = resolve_pattern()
         self.regex = re.compile(self.pattern)
         self.log = get_emitter("surface.sensor", phase="SENSING")

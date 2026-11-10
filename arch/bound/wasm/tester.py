@@ -1,50 +1,72 @@
 # xphi.arch.bound.wasm.tester
-import sys
-import json
 import asyncio
+import json
 from pathlib import Path
-from typing import Tuple, Dict, Type, Any
+from typing import Any, Dict, List, Optional, Tuple, Type
 
-from xphi.arch.bound.wasm.auditor import CanonicalProofAuditor
-
-from xphi.node.space.tunnel.factory import TunnelFactory
-from xphi.node.space.bind.resolver import resolve_path
+from xphi.arch.contract.event.next import next_id
 from xphi.node.ops.task.supervisor import TaskSupervisor
-from xphi.node.ops.task.wasm import TaskWasm, DEFAULT_WASM_PATH
+from xphi.node.ops.task.wasm import DEFAULT_WASM_PATH, TaskWasm
 from xphi.node.runtime.wasm.broker import WasmBroker
-from xphi.watcher.plane.emitter import get_emitter, flow_scope
+from xphi.node.space.tunnel.factory import TunnelFactory
+from xphi.watcher.plane.emitter import flow_scope, get_emitter
 
 log = get_emitter("wasm.tester")
 
+class CanonicalProofAuditor:
+    def __init__(self) -> None:
+        self.flow_id = next_id()
+        self.canonical_records: List[Dict[str, Any]] = []
+        self.is_collapsed: bool = False
+        self.is_exhausted: bool = False
+
+    def project_state(self, action: str, metrics: dict) -> None:
+        if not metrics:
+            return
+
+        fuel = metrics.get("fuel_consumed")
+        if fuel is not None:
+            record = {
+                "action": action,
+                "tier": metrics.get("tier", "UNKNOWN"),
+                "fuel": fuel,
+                "mem_usage": metrics.get("mem_usage_bytes"),
+                "mem_peak": metrics.get("mem_peak_bytes"),
+            }
+            clean_record = {k: v for k, v in record.items() if v is not None}
+            self.canonical_records.append(clean_record)
+
+    def generate_payload(self) -> str:
+        return json.dumps(self.canonical_records, sort_keys=True, separators=(",", ":"))
 
 class WasmTester:
     def __init__(
         self,
         wasm_module_path: str,
         sandbox_root: str,
-        suites: Dict[str, Type] = None,
+        suites: Optional[Dict[str, Type]] = None,
         kernel_wasm_path: str = DEFAULT_WASM_PATH,
     ):
-        # 1. 테스트 대상 WASM 아티팩트 (예: phase.wasm 또는 fsm.wasm)
         self.wasm_module_path = wasm_module_path
         self.sandbox_root = sandbox_root
         self.kernel_wasm_path = str(Path(sandbox_root) / kernel_wasm_path)
-        
-        self.rupture_confirmed = False
-        self.last_error_context = ""
-        self.auditors = [] 
+        self.is_halted: bool = False
+        self.last_error_context: str = ""
+        self.auditors: List[Any] = []
         self.suites = suites or {}
-        self.test_execution_hash = None
+        self.test_execution_hash: Optional[str] = None
         self.suite_runners: Dict[str, Any] = {}
 
     async def _await_rupture(self) -> None:
-        """@desc: Polls for a Collapse signal in the background while tests are actively running"""
+        """Polls auditor flags in the background while test suites run."""
         try:
-            while not self.rupture_confirmed:
+            while not self.is_halted:
                 for auditor in self.auditors:
-                    if getattr(auditor, 'is_collapsed', False) or getattr(auditor, 'is_exhausted', False):
-                        self.rupture_confirmed = True
-                        self.last_error_context = f"Auditor '{auditor.__class__.__name__}' detected fatal system collapse."
+                    if getattr(auditor, "is_collapsed", False) or getattr(auditor, "is_exhausted", False):
+                        self.is_halted = True
+                        self.last_error_context = (
+                            f"Auditor '{auditor.__class__.__name__}' detected fatal system state."
+                        )
                         log.crit(f"[FATAL] {self.last_error_context}")
                         return
                 await asyncio.sleep(0.5)
@@ -52,20 +74,19 @@ class WasmTester:
             pass
 
     async def _run_all_suites(self, broker: WasmBroker) -> int:
-        """@desc: Sequentially executes injected scenario suites without hardcoded dependencies"""
         total_fails = 0
         for suite_name, suite_cls in self.suites.items():
             log.info(f"\n>>> [PHASE] Starting Test Suite: {suite_name.upper()} <<<")
             try:
                 suite_instance = suite_cls(broker)
                 self.suite_runners[suite_name] = suite_instance
-                
+
                 await suite_instance.run_all()
-                total_fails += suite_instance.fail_count
+                total_fails += getattr(suite_instance, "fail_count", 0)
             except Exception as e:
                 log.error(f"[ERROR] Suite '{suite_name}' crashed unexpectedly: {e}", exc_info=True)
                 total_fails += 1
-                
+
         return total_fails
 
     async def execute(self) -> Tuple[bool, str]:
@@ -74,102 +95,98 @@ class WasmTester:
         supervisor = None
         tunnel = None
         proof_auditor = CanonicalProofAuditor()
-        self.auditors.append(proof_auditor)
-        proof_auditor.attach()
-        
+        self.auditors = [proof_auditor]
+
         try:
             tunnel = await TunnelFactory.get_default()
             log.info("[SYSTEM] Initializing TaskSupervisor and WasmTaskerDaemon...")
             supervisor = TaskSupervisor(source="WasmTester")
-            
-            # TaskWasm의 기본 Fast-WASM 풀(_wasm_pool)은 항상 커널(phase.wasm)을 마운트하도록 유지합니다.
-            # (fsm.wasm은 broker.execute(dict) 시 payload['wasm_path']를 통해 Heavy Sandbox 경로로 격리 실행됨)
             tasker_daemon = TaskWasm(
-                tunnel=tunnel, 
-                supervisor=supervisor, 
-                default_wasm_path=self.kernel_wasm_path
+                tunnel=tunnel,
+                supervisor=supervisor,
+                default_wasm_path=self.kernel_wasm_path,
             )
-            
+
             test_stream = "wasm:execute:stream:tester_isolated"
             test_control = "wasm:control:req:tester_isolated"
-            
+
             tasker_daemon.topic = test_stream
             tasker_daemon.control_channel = test_control
             tasker_daemon.group_name = "wasm_tester_group"
-            
+
             supervisor.mount_daemon(tasker_daemon)
-            await asyncio.sleep(1) 
-            
+            await asyncio.sleep(1)
+
             log.info("[SYSTEM] Initializing WasmBroker & Scenarios...")
             broker = WasmBroker(
-                request_stream=test_stream, 
+                request_stream=test_stream,
                 timeout=5.0,
-                target_auditor=proof_auditor
+                target_auditor=proof_auditor,
             )
             broker.control_channel = test_control
-            
+
             with flow_scope(phase="TEST_EXECUTION", flow_id=proof_auditor.flow_id):
                 observer_task = asyncio.create_task(self._await_rupture())
                 scenario_task = asyncio.create_task(self._run_all_suites(broker))
-                
+
                 done, pending = await asyncio.wait(
-                    [observer_task, scenario_task], 
-                    return_when=asyncio.FIRST_COMPLETED
+                    [observer_task, scenario_task],
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-                
+
                 for task in pending:
                     task.cancel()
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
-                    
-                if self.rupture_confirmed:
+
+                if self.is_halted:
                     return False, self.last_error_context
 
                 if scenario_task in done:
                     total_fails = scenario_task.result()
                     if total_fails > 0:
-                        err_msg = f"Test suites failed with {total_fails} total errors. Likely Semantic Hang, Trap, or Signature Mismatch."
+                        err_msg = f"Test suites failed with {total_fails} total errors."
                         return False, err_msg
-                    
+
                     log.info("\n[SYSTEM] Generating Canonical Proof via Phase Kernel (phase.wasm)...")
                     canonical_payload = proof_auditor.generate_payload()
-                    
+
                     if not canonical_payload or canonical_payload == "[]":
                         err_msg = "[AnchorStore] Canonical payload is empty. Structural projection failed."
                         log.error(err_msg)
                         return False, err_msg
-                    
+
                     try:
                         proof_res = await broker.invoke(
                             "compute_fingerprint",
                             canonical_payload,
                             wasm_path=self.kernel_wasm_path,
                         )
-                        if getattr(proof_res, 'success', False):
+                        if getattr(proof_res, "success", False):
                             self.test_execution_hash = json.loads(proof_res.output).get("fingerprint")
-                            log.info(f"[AnchorStore] Test Execution Proof successfully sealed! Hash: {self.test_execution_hash}")
+                            log.info(f"[AnchorStore] Test Execution Proof sealed. Hash: {self.test_execution_hash}")
                         else:
-                            error_msg = getattr(proof_res.error, 'message', 'Unknown Error') if hasattr(proof_res, 'error') else 'Unknown Error'
+                            error_msg = (
+                                getattr(proof_res.error, "message", "Unknown Error")
+                                if hasattr(proof_res, "error")
+                                else "Unknown Error"
+                            )
                             log.error(f"[AnchorStore] Failed to seal test execution: {error_msg}")
                     except Exception as proof_err:
                         log.error(f"[AnchorStore] Exception during proof generation: {proof_err}")
-                        
+
                     return True, ""
-                    
         except Exception as e:
             log.error(f"[FATAL] Test orchestration crashed: {e}", exc_info=True)
             return False, str(e)
-            
         finally:
-            if proof_auditor:
-                proof_auditor.detach()
             if supervisor:
                 log.info("[SYSTEM] Tearing down Sandbox (Shutting down Supervisor)...")
                 await supervisor.shutdown()
-                
+
             if tunnel:
-                if hasattr(tunnel.state_store, 'aclose'):
+                if hasattr(tunnel.state_store, "aclose"):
                     await tunnel.state_store.aclose()
-                elif hasattr(tunnel.state_store, 'close'):
+                elif hasattr(tunnel.state_store, "close"):
                     await tunnel.state_store.close()
             await TunnelFactory.close_all()

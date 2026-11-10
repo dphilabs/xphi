@@ -219,7 +219,7 @@ def resolve_path(name: str, start: Path | None = None) -> Path:
 
 def resolve_channel(name: str, start: Path | None = None) -> str:
     """
-    @flow: Resolve logical channel -> physical redis channel.
+    @flow: Resolve logical channel -> physical tunnel channel.
     @rule: Anchor override -> Namespace validation.
     """
     self_root = find_current_self(start)
