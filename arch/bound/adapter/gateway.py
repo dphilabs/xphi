@@ -157,21 +157,21 @@ class IdempotencyMapper:
         self.tunnel = tunnel
 
     async def get_or_create_handle(self, target_id: str, idempotency_key: str) -> Tuple[str, bool]:
-        redis_key = f"mcp:idem:{target_id}:{idempotency_key}"
+        tunnel_key = f"mcp:idem:{target_id}:{idempotency_key}"
         try:
-            existing_handle = await self.tunnel.get(redis_key)
+            existing_handle = await self.tunnel.get(tunnel_key)
             if existing_handle:
                 return str(existing_handle), False
                 
             entropy = uuid.uuid4().hex[:12]
             new_handle = f"txn_{int(time.time())}_{entropy}"
             
-            is_set = await self.tunnel.set(redis_key, new_handle, ex=86400, nx=True)
+            is_set = await self.tunnel.set(tunnel_key, new_handle, ex=86400, nx=True)
             if is_set:
                 return new_handle, True
             else:
                 await asyncio.sleep(0.01)
-                winner_handle = await self.tunnel.get(redis_key)
+                winner_handle = await self.tunnel.get(tunnel_key)
                 if winner_handle:
                     return str(winner_handle), False
                 else:

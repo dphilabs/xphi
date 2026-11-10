@@ -76,7 +76,9 @@ class FlowExecutor(BaseExecutor):
         with flow_scope(flow_id=task_id, phase="SUPERVISION"):
             self.log.info(f"[Isolated] Spawning isolated worker for '{command}' (Timeout: {timeout_seconds}s)")
             process = None
-            tunnel = getattr(self.node, 'tunnel', getattr(self.node, 'redis', None)) if self.node else None
+            tunnel = (getattr(self.node, 'tunnel', None) if self.node else None) or (
+                await TunnelFactory.get_default() if response_channel else None
+            )
             try:
                 ## Enforce strict isolation timeout boundary
                 async with asyncio.timeout(timeout_seconds):
@@ -218,7 +220,7 @@ async def _async_run_flow_proxy(command_name: str, payload: dict):
     @role: Dedicated Flow Receiver
     @desc: Listens to the Tunnel stream until a FINALIZE or ERROR event is received.
     """
-    tunnel = await TunnelFactory.get_isolated()
+    tunnel = await TunnelFactory.get_isolated(socket_timeout=None)
     task_id = f"flow-{uuid.uuid4().hex[:8]}"
     response_channel = f"res:{task_id}"
     log_channel = f"log:{task_id}"

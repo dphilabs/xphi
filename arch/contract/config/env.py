@@ -1,10 +1,10 @@
 # xphi.arch.contract.config.env
 import os
-import logging
 from typing import Any
 from xphi.watcher.plane.emitter import get_emitter
 
 log = get_emitter("config.env")
+
 
 class ConfigResolver:
     def __init__(self):
@@ -28,7 +28,7 @@ class ConfigResolver:
         if env_key in os.environ:
             return os.environ[env_key]
         raise AttributeError(f"'{type(self).__name__}' object (xphi config) has no attribute '{name}'")
-    
+
     def __setattr__(self, name: str, value: Any):
         if name == "_local_overrides":
             super().__setattr__(name, value)
@@ -36,17 +36,21 @@ class ConfigResolver:
 
         self._local_overrides[name] = value
 
+
 config = ConfigResolver()
+
 
 def _get_string(key: str, default: str) -> str:
     if key in config._local_overrides:
         return config.get(key)
     return os.getenv(key, default)
 
+
 def _get_int(key: str, default: str) -> int:
     if key in config._local_overrides:
         return int(config.get(key))
     return int(os.getenv(key, default))
+
 
 ## GATEWAY
 DEFAULT_GATEWAY_PORT = 8356
@@ -61,18 +65,6 @@ PUBSUB_CHANNEL = _get_string("PUBSUB_CHANNEL", "audit_channel")
 """Cryptography & KMS"""
 XPHI_ENV = _get_string("XPHI_ENV", "local")
 AIRGAP_MODE = _get_string("AIRGAP_MODE", "0")
-
-"""Infrastructure & Tunnel"""
-REDIS_HOST = _get_string("XPHI_REDIS_HOST", _get_string("REDIS_HOST", "localhost"))
-REDIS_PORT = _get_int("XPHI_REDIS_PORT", _get_int("REDIS_PORT", "6379"))
-REDIS_URL = _get_string("REDIS_URL", f"redis://{REDIS_HOST}:{REDIS_PORT}/0")
-
-MQ_ENGINE = _get_string("MQ_ENGINE", "redis")
-MQ_HOST = _get_string("MQ_HOST", REDIS_HOST)
-MQ_PORT = _get_int("MQ_PORT", str(REDIS_PORT))
-
-_default_state_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
-STATE_STORE_URL = _get_string("STATE_STORE_URL", _default_state_url)
 
 ## COMPAT & VCR
 FIBER_COMPAT_RULES_PATH = _get_string("FIBER_COMPAT_RULES_PATH", "")

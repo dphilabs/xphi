@@ -136,7 +136,7 @@ async def anchor_commit(
         "ts": current_ts,
         "topo": 1,
         "press": len(repos),
-        "rupture": False,
+        "discont": False,
         "injected_tick": None
     }
     

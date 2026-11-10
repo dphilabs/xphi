@@ -1,5 +1,4 @@
 # xphi.state.phase.executor.cont
-## @lineage: xphi.state.phase.flow.cont
 from __future__ import annotations
 
 import os
@@ -12,7 +11,6 @@ import subprocess
 import importlib
 from typing import List, Dict, Optional, Any, Callable
 from dataclasses import asdict
-import redis.asyncio as redis_async
 
 from xphi.arch.contract.event.next import next_id, next_phase_id, parse_id, parse_phase_id, LogEvent
 from xphi.arch.contract.event.psi import PsiEvent, PsiCarrier
