@@ -80,13 +80,6 @@ class ClearingReceiptResponse(BaseModel):
     status: EdgeState
     rollup_payload: Dict[str, Any] = Field(..., description="External payload for EVM/Rollup")
 
-class EpochInitPayload(BaseModel):
-    ts: int = Field(..., description="Ingress timestamp (ms)")
-    topo: int = Field(..., description="Sequencer topology ID")
-    press: int = Field(..., description="Allocated fuel limit")
-    rupture: bool = Field(..., description="Network rupture flag")
-    injected_intent: TradeIngressRequest = Field(..., description="Injected raw intent")
-
 class ParityTripletSchema(BaseModel):
     topos_id: str = Field(..., description="Topology ID")
     phase_id: int = Field(ge=0, le=4294967295, description="Rust u32 constraint")
