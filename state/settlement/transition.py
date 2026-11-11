@@ -14,7 +14,7 @@ from xphi.arch.bound.adapter.state import StateAdapter
 from xphi.node.runtime.wasm.broker import WasmBroker
 from xphi.node.runtime.wasm.quota import Tier
 from xphi.watcher.plane.emitter import get_emitter
-from xphi.node.runtime.wasm.gateway import GatewayWasm 
+from xphi.state.inter.gateway import GatewayWasm 
 
 epoch_log = get_emitter("fsm.epoch")
 

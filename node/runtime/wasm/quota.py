@@ -1,5 +1,4 @@
 # xphi.node.runtime.wasm.quota
-## @lineage: xphi.node.wasm.quota
 import logging
 from dataclasses import dataclass
 from enum import Enum

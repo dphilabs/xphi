@@ -1,4 +1,4 @@
-# xphi.arch.bound.wasm.tester
+# xphi.node.ops.wasm.tester
 import asyncio
 import json
 from pathlib import Path

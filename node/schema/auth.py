@@ -1,4 +1,4 @@
-# xphi.arch.model.auth
+# xphi.node.schema.auth
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Optional
