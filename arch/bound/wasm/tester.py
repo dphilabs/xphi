@@ -6,12 +6,18 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 from xphi.arch.contract.event.next import next_id
 from xphi.node.ops.task.supervisor import TaskSupervisor
-from xphi.node.ops.task.wasm import DEFAULT_WASM_PATH, TaskWasm
+from xphi.node.ops.task.wasm import (
+    DEFAULT_WASM_PATH,
+    REDIS_CONTROL_CHANNEL,
+    REDIS_STREAM_TOPIC,
+    TaskWasm,
+)
 from xphi.node.runtime.wasm.broker import WasmBroker
 from xphi.node.space.tunnel.factory import TunnelFactory
 from xphi.watcher.plane.emitter import flow_scope, get_emitter
 
 log = get_emitter("wasm.tester")
+
 
 class CanonicalProofAuditor:
     def __init__(self) -> None:
@@ -89,11 +95,71 @@ class WasmTester:
 
         return total_fails
 
+    async def _run_with_broker(
+        self,
+        broker: WasmBroker,
+        proof_auditor: CanonicalProofAuditor,
+    ) -> Tuple[bool, str]:
+        with flow_scope(phase="TEST_EXECUTION", flow_id=proof_auditor.flow_id):
+            observer_task = asyncio.create_task(self._await_rupture())
+            scenario_task = asyncio.create_task(self._run_all_suites(broker))
+
+            done, pending = await asyncio.wait(
+                [observer_task, scenario_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
+            if self.is_halted:
+                return False, self.last_error_context
+
+            if scenario_task in done:
+                total_fails = scenario_task.result()
+                if total_fails > 0:
+                    err_msg = f"Test suites failed with {total_fails} total errors."
+                    return False, err_msg
+
+                log.info("\n[SYSTEM] Generating Canonical Proof via Phase Kernel (phase.wasm)...")
+                canonical_payload = proof_auditor.generate_payload()
+
+                if not canonical_payload or canonical_payload == "[]":
+                    err_msg = "[AnchorStore] Canonical payload is empty. Structural projection failed."
+                    log.error(err_msg)
+                    return False, err_msg
+
+                try:
+                    proof_res = await broker.invoke(
+                        "compute_fingerprint",
+                        canonical_payload,
+                        wasm_path=self.kernel_wasm_path,
+                    )
+                    if getattr(proof_res, "success", False):
+                        self.test_execution_hash = json.loads(proof_res.output).get("fingerprint")
+                        log.info(f"[AnchorStore] Test Execution Proof sealed. Hash: {self.test_execution_hash}")
+                    else:
+                        error_msg = (
+                            getattr(proof_res.error, "message", "Unknown Error")
+                            if hasattr(proof_res, "error")
+                            else "Unknown Error"
+                        )
+                        log.error(f"[AnchorStore] Failed to seal test execution: {error_msg}")
+                except Exception as proof_err:
+                    log.error(f"[AnchorStore] Exception during proof generation: {proof_err}")
+
+                return True, ""
+
+        return False, "Unexpected execution termination."
+
     async def execute(self) -> Tuple[bool, str]:
         target_name = Path(self.wasm_module_path).name
         log.info(f"\n--- [START] Orchestrating Distributed WASM Environment (Target: {target_name}) ---")
         supervisor = None
         tunnel = None
+        broker = None
         proof_auditor = CanonicalProofAuditor()
         self.auditors = [proof_auditor]
 
@@ -125,61 +191,14 @@ class WasmTester:
             )
             broker.control_channel = test_control
 
-            with flow_scope(phase="TEST_EXECUTION", flow_id=proof_auditor.flow_id):
-                observer_task = asyncio.create_task(self._await_rupture())
-                scenario_task = asyncio.create_task(self._run_all_suites(broker))
-
-                done, pending = await asyncio.wait(
-                    [observer_task, scenario_task],
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                for task in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
-
-                if self.is_halted:
-                    return False, self.last_error_context
-
-                if scenario_task in done:
-                    total_fails = scenario_task.result()
-                    if total_fails > 0:
-                        err_msg = f"Test suites failed with {total_fails} total errors."
-                        return False, err_msg
-
-                    log.info("\n[SYSTEM] Generating Canonical Proof via Phase Kernel (phase.wasm)...")
-                    canonical_payload = proof_auditor.generate_payload()
-
-                    if not canonical_payload or canonical_payload == "[]":
-                        err_msg = "[AnchorStore] Canonical payload is empty. Structural projection failed."
-                        log.error(err_msg)
-                        return False, err_msg
-
-                    try:
-                        proof_res = await broker.invoke(
-                            "compute_fingerprint",
-                            canonical_payload,
-                            wasm_path=self.kernel_wasm_path,
-                        )
-                        if getattr(proof_res, "success", False):
-                            self.test_execution_hash = json.loads(proof_res.output).get("fingerprint")
-                            log.info(f"[AnchorStore] Test Execution Proof sealed. Hash: {self.test_execution_hash}")
-                        else:
-                            error_msg = (
-                                getattr(proof_res.error, "message", "Unknown Error")
-                                if hasattr(proof_res, "error")
-                                else "Unknown Error"
-                            )
-                            log.error(f"[AnchorStore] Failed to seal test execution: {error_msg}")
-                    except Exception as proof_err:
-                        log.error(f"[AnchorStore] Exception during proof generation: {proof_err}")
-
-                    return True, ""
+            return await self._run_with_broker(broker, proof_auditor)
         except Exception as e:
             log.error(f"[FATAL] Test orchestration crashed: {e}", exc_info=True)
             return False, str(e)
         finally:
+            if broker:
+                await broker.close()
+
             if supervisor:
                 log.info("[SYSTEM] Tearing down Sandbox (Shutting down Supervisor)...")
                 await supervisor.shutdown()
@@ -190,3 +209,37 @@ class WasmTester:
                 elif hasattr(tunnel.state_store, "close"):
                     await tunnel.state_store.close()
             await TunnelFactory.close_all()
+
+
+class WasmNodeTester(WasmTester):
+    """
+    격리 데몬(TaskSupervisor / TaskWasm)을 중복 생성하지 않고,
+    기동 중인 실제 Node의 TaskWasm 스트림에 직접 바인딩하여 E2E 스위트를 실행하는 테스터.
+    """
+    async def execute(self) -> Tuple[bool, str]:
+        target_name = Path(self.wasm_module_path).name
+        log.info(f"\n--- [START] Orchestrating Live-Node WASM Environment (Target: {target_name}) ---")
+        broker = None
+        proof_auditor = CanonicalProofAuditor()
+        self.auditors = [proof_auditor]
+
+        try:
+            log.info("[SYSTEM] Binding WasmBroker to Live Node TaskWasm...")
+            broker = WasmBroker(
+                request_stream=REDIS_STREAM_TOPIC,
+                timeout=5.0,
+                target_auditor=proof_auditor,
+            )
+            broker.control_channel = REDIS_CONTROL_CHANNEL
+
+            return await self._run_with_broker(broker, proof_auditor)
+        except Exception as e:
+            log.error(f"[FATAL] Live-Node test orchestration crashed: {e}", exc_info=True)
+            return False, str(e)
+        finally:
+            if broker:
+                try:
+                    await broker.update_policy("SYSTEM")
+                except Exception:
+                    pass
+                await broker.close()
