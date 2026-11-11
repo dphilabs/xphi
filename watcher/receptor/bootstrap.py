@@ -4,6 +4,7 @@ import json
 import time
 import sys
 import importlib
+import importlib.util
 import traceback
 from pathlib import Path
 from dataclasses import asdict
@@ -25,22 +26,43 @@ log = get_emitter("receptor.bootstrap")
 
 SELF_ROOT = find_current_self()
 
+
+def _resolve_watch_targets(watch_dir: str) -> dict[Path, str]:
+    targets: dict[Path, str] = {}
+    for pkg_name in ("fiber", "xphi"):
+        spec = importlib.util.find_spec(pkg_name)
+        if spec and spec.submodule_search_locations:
+            targets[Path(spec.submodule_search_locations[0]).resolve()] = pkg_name
+
+    resolved_root = Path(watch_dir).resolve()
+    home_root = Path.home().resolve()
+    if resolved_root == home_root:
+        anchor_root = home_root / ".anchor"
+        if anchor_root.exists():
+            targets[anchor_root] = ""
+    elif resolved_root.exists() and resolved_root not in targets:
+        targets[resolved_root] = ""
+    return targets
+
 class TracerSource(FileSystemEventHandler):
     """Detects physical file mutations and triggers topological realignment."""
-    def __init__(self, kernel: ReceptorKernel, loop: asyncio.AbstractEventLoop, watch_dir: str, tunnel: UniversalFacade):
+    def __init__(self, kernel: ReceptorKernel, loop: asyncio.AbstractEventLoop, watch_targets: dict[Path, str], tunnel: UniversalFacade):
         self.kernel = kernel
         self.loop = loop  
-        self.watch_dir = Path(watch_dir).resolve()
+        self.watch_targets = watch_targets
         self.last_trigger = 0
         self.tunnel = tunnel
 
     def _resolve_fqn(self, file_path: str) -> str:
         path = Path(file_path).resolve()
-        try:
-            relative = path.relative_to(self.watch_dir)
-            return ".".join(relative.with_suffix("").parts)
-        except ValueError:
-            return ""
+        for base_dir, base_fqn in self.watch_targets.items():
+            try:
+                relative = path.relative_to(base_dir)
+                rel_fqn = ".".join(relative.with_suffix("").parts)
+                return f"{base_fqn}.{rel_fqn}" if base_fqn else rel_fqn
+            except ValueError:
+                continue
+        return ""
 
     def on_modified(self, event):
         if time.time() - self.last_trigger < 1.0:
@@ -58,12 +80,11 @@ class TracerSource(FileSystemEventHandler):
         if module_fqn and module_fqn in sys.modules:
             try:
                 log.info(f"[Plasticity] Re-aligning topology for: {module_fqn}")
-                
-                # 1. Refresh Master (Receptor) memory space
+                # Refresh Master (Receptor) memory space
                 importlib.reload(sys.modules[module_fqn])
                 log.info(f"[Modification] {module_fqn} successfully integrated into Master Runtime.")
                 
-                # 2. Broadcast hot-reload event to all Worker processes
+                # Broadcast hot-reload event to all Worker processes
                 sync_event = PsiEvent(
                     event_id=next_id(), 
                     parent_id=None, 
@@ -120,51 +141,43 @@ class TracerSource(FileSystemEventHandler):
 async def receptor_bootstrap(tunnel: UniversalFacade, watch_dir: str = SELF_ROOT):
     sink = TunnelSink(tunnel=tunnel) 
     system_topos = build_system_topos()
-    
-    # Kernel 생성
     kernel = ReceptorKernel(
         sink=sink, 
         window_steps=4, 
         structures=system_topos
     )
-    # 캡슐화된 커널 내부의 방화벽을 터널에 부착
     kernel.attach_firewall(tunnel)
-
-    main_loop = asyncio.get_running_loop()
-    event_handler = TracerSource(kernel, main_loop, watch_dir=watch_dir, tunnel=tunnel)
-    
     log.info(f"\n[Pre-Flight] Initiating system-wide module discovery at {watch_dir}...")
     discovery_start = time.time()
-    
-    # Blocking call to guarantee safe discovery before the async loop takes over
     discover_modules(Path(watch_dir))
     
     elapsed = time.time() - discovery_start
     log.info(f"[Pre-Flight] Discovery complete in {elapsed:.2f}s. Topology manifest ready.")
 
+    watch_targets = _resolve_watch_targets(watch_dir)
+    main_loop = asyncio.get_running_loop()
+    event_handler = TracerSource(kernel, main_loop, watch_targets=watch_targets, tunnel=tunnel)
+
     observer = Observer()
-    observer.schedule(event_handler, path=watch_dir, recursive=True)
+    for target_path in watch_targets:
+        observer.schedule(event_handler, path=str(target_path), recursive=True)
     observer.start()
     
-    log.info(f"\n[Singularity] Receptor Ignited -> Observing {watch_dir}")
-
+    log.info(f"\nReceptor Ignited -> Observing {[str(p) for p in watch_targets]}")
     try:
         while True:
             try:
                 await kernel.start_daemons()
-                
                 current_phase = await kernel.get_current_phase()
                 log.info(f"[Topology] Mounted structures: {[s.name for s in system_topos]} (Φ={current_phase})")
                 
                 while True:
                     await asyncio.sleep(3600) 
-                    
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log.error(f"[Rupture] Internal anomaly detected: {e}. Membrane remains active. Renewing in 5s...")
                 await asyncio.sleep(5.0) 
-                
     except asyncio.CancelledError:
         log.info("\n[Evaporation] Leadership yielded. Receptor dissolving...")
     finally:
