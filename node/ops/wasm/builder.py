@@ -1,4 +1,4 @@
-# xphi.arch.bound.wasm.builder
+# xphi.node.ops.wasm.builder
 import os
 import shutil
 import json

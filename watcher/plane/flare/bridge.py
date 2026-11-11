@@ -8,7 +8,7 @@ from typing import Callable, Awaitable, Optional
 
 from xphi.watcher.plane.emitter import get_emitter
 from xphi.node.runtime.wasm.method import WasmMethod
-from xphi.node.rpc.schema.receipt import EdgeHeader
+from xphi.node.schema.receipt import EdgeHeader
 
 log = get_emitter("tunnel.flare")
 
