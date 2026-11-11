@@ -4,9 +4,9 @@ from enum import Enum
 from pathlib import Path
 from xphi.node.space.bind.resolver import resolve_path
 
-ANCHOR_ROOT = resolve_path("anchor")
-RUN_DIR = ANCHOR_ROOT / "run"
-KV_DIR = ANCHOR_ROOT / "kv"
+TUNNEL_ROOT = resolve_path("tunnel")
+RUN_DIR = TUNNEL_ROOT / "run"
+KV_DIR = TUNNEL_ROOT / "kv"
 
 TUNNEL_SOCK_PATH = RUN_DIR / "tunnel.sock"
 TUNNEL_PID_PATH = RUN_DIR / "tunnel.pid"

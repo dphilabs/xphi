@@ -44,6 +44,7 @@ DEFAULT_BOUND_SKELETON = {
     "registry": ":anchor:/registry",
     "adb": ":anchor:/adb",
     "sign": ":anchor:/sign",
+    "tunnel": ":anchor:/tunnel",
     "io": ":io:",
     "log": ":io:/log",
     "ailog": ":io:/log/ailog",
