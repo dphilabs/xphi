@@ -1,4 +1,5 @@
 # xphi.node.space.tunnel.factory
+import os
 import logging
 import asyncio
 from typing import Optional, Any, List, Tuple
@@ -198,10 +199,12 @@ class UniversalFacadeSync:
 class TunnelFactory:
     _async_instance: Optional[UniversalFacade] = None
     _sync_instance: Optional[UniversalFacadeSync] = None
+    _instance_pid: Optional[int] = None
 
     @classmethod
     async def get_default(cls, **kwargs) -> UniversalFacade:
-        if cls._async_instance is None:
+        current_pid = os.getpid()
+        if cls._async_instance is None or cls._instance_pid != current_pid:
             config = resolve_default_config()
             scheme, state_url, mq_url = parse_connection_urls(config.default_url)
 
@@ -210,7 +213,8 @@ class TunnelFactory:
             scheme = kwargs.pop("mq_protocol", scheme)
 
             cls._async_instance = UniversalFacade(state_url, mq_url, scheme, **kwargs)
-            log.debug(f"[TunnelFactory] Provisioned Async Tunnel: {mq_url}")
+            cls._instance_pid = current_pid
+            log.debug(f"[TunnelFactory] Provisioned Async Tunnel (PID {current_pid}): {mq_url}")
         return cls._async_instance
 
     @classmethod
@@ -232,7 +236,8 @@ class TunnelFactory:
 
     @classmethod
     def get_sync(cls, **kwargs) -> UniversalFacadeSync:
-        if cls._sync_instance is None:
+        current_pid = os.getpid()
+        if cls._sync_instance is None or cls._instance_pid != current_pid:
             config = resolve_default_config()
             scheme, state_url, mq_url = parse_connection_urls(config.default_url)
 
@@ -241,7 +246,8 @@ class TunnelFactory:
             scheme = kwargs.pop("mq_protocol", scheme)
 
             cls._sync_instance = UniversalFacadeSync(state_url, mq_url, scheme, **kwargs)
-            log.debug(f"[TunnelFactory] Provisioned Sync Tunnel: {mq_url}")
+            cls._instance_pid = current_pid
+            log.debug(f"[TunnelFactory] Provisioned Sync Tunnel (PID {current_pid}): {mq_url}")
         return cls._sync_instance
 
     @classmethod
@@ -267,6 +273,8 @@ class TunnelFactory:
         if cls._sync_instance:
             cls._sync_instance.state_store.close()
             cls._sync_instance = None
+
+        cls._instance_pid = None
 
 async def from_url(url: str, **kwargs) -> UniversalFacade:
     scheme, state_url, mq_url = parse_connection_urls(url)

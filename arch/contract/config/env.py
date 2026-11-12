@@ -51,7 +51,6 @@ def _get_int(key: str, default: str) -> int:
         return int(config.get(key))
     return int(os.getenv(key, default))
 
-
 ## GATEWAY
 DEFAULT_GATEWAY_PORT = 8356
 FIBER_GATEWAY_URL = _get_string("FIBER_GATEWAY_URL", f"http://localhost:{DEFAULT_GATEWAY_PORT}")
@@ -72,3 +71,6 @@ VCR_INCLUDE_RAW = _get_string("VCR_INCLUDE_RAW", "false")
 
 ## WASM PLANE
 XPHI_WASM_PLANE = _get_string("XPHI_WASM_PLANE", "local")
+
+## TUNNEL
+XPHI_TUNNEL_URL = _get_string("XPHI_TUNNEL_URL", "")
