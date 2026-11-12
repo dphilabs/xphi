@@ -4,7 +4,7 @@ import fsmModule from "./fsm.wasm";
 
 export interface Env {
     PYTHON_ENGINE: Fetcher;      // Service Binding to Python Worker
-    XPHI_EDGE_TOKEN?: string;    // Mode 2: Private BYOC pre-shared secret
+    XPHI_EDGE_TOKEN?: string;    // Mode 2: Private KYOC pre-shared secret
     XPHI_X402_RECEIVER?: string; // Mode 3: Public x402 settlement address/policy
 }
 
@@ -18,7 +18,7 @@ const EdgeHeader = {
 function verifyEdgeIngress(request: Request, env: Env): Response | null {
     const edgeToken = request.headers.get(EdgeHeader.EDGE_TOKEN);
 
-    // 1. [Priority 1: Private BYOC / Operator VIP Pass]
+    // 1. [Priority 1: Private KYOC / Operator VIP Pass]
     if (env.XPHI_EDGE_TOKEN) {
         if (edgeToken === env.XPHI_EDGE_TOKEN) return null;
         if (!env.XPHI_X402_RECEIVER) {

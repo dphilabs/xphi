@@ -94,7 +94,7 @@ class _MockStateStore:
             return b"error-id"
 
     def _build_request_headers(self, context: dict) -> dict:
-        """Builds canonical Edge headers for Private BYOC token and x402 fuel receipts."""
+        """Builds canonical Edge headers for Private KYOC token and x402 fuel receipts."""
         headers = {"Content-Type": "application/json"}
 
         edge_token = context.get("edge_token") or os.getenv("XPHI_EDGE_TOKEN")
