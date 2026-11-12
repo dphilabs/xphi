@@ -7,12 +7,15 @@ import subprocess
 import asyncio
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from xphi.arch.contract.config.tunnel import (
     KV_DIR,
     RUN_DIR,
     TUNNEL_PID_PATH,
     TUNNEL_SOCK_PATH,
+    TUNNEL_URL_PATH,
+    resolve_default_config,
 )
 from xphi.arch.contract.event.next import EventObserver, LogEvent
 from xphi.arch.contract.event.psi import PsiEvent, PsiCarrier, CarrierType
@@ -40,7 +43,6 @@ _node_instance: Optional[RuntimeAnchor] = None
 _valkey_proc: Optional[asyncio.subprocess.Process] = None
 _background_tasks = set()
 
-
 def _resolve_valkey_bin() -> str:
     """Resolves bundled valkey-server binary from valkeylite or system PATH."""
     try:
@@ -57,17 +59,23 @@ def _resolve_valkey_bin() -> str:
         return sys_bin
     raise RuntimeError("valkey-server binary not found. Install 'valkeylite'.")
 
-def _ping_unix_socket(sock_path: Path) -> bool:
-    if not sock_path.exists():
+
+def _ping_endpoint(sock_path: Optional[Path] = None, host: str = "127.0.0.1", port: int = 0) -> bool:
+    if sock_path and not sock_path.exists():
         return False
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        if port > 0:
+            s = socket.create_connection((host, port), timeout=0.2)
+        else:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.settimeout(0.2)
             s.connect(str(sock_path))
+        with s:
             s.sendall(b"*1\r\n$4\r\nPING\r\n")
             return s.recv(16).startswith(b"+PONG")
     except OSError:
         return False
+
 
 def _cleanup_stale_valkey() -> None:
     if TUNNEL_PID_PATH.exists():
@@ -85,27 +93,46 @@ def _cleanup_stale_valkey() -> None:
 
 async def ensure_embedded_valkey() -> None:
     global _valkey_proc
-    if _ping_unix_socket(TUNNEL_SOCK_PATH):
-        log.info(f"[Boot] Reusing active tunnel socket at {TUNNEL_SOCK_PATH}")
+    TUNNEL_URL_PATH.unlink(missing_ok=True)
+    tunnel_url = os.getenv("XPHI_TUNNEL_URL") or resolve_default_config().default_url
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    TUNNEL_URL_PATH.write_text(tunnel_url, encoding="utf-8")
+    parsed = urlparse(tunnel_url)
+
+    is_tcp = parsed.scheme in ("redis", "valkey")
+    if is_tcp:
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 6379
+        if host not in ("127.0.0.1", "localhost"):
+            log.info(f"[Boot] External tunnel configured ({tunnel_url}). Skipping embedded Valkey.")
+            return
+        sock_path = None
+        target = f"{host}:{port}"
+        bind_args = ["--bind", host, "--port", str(port)]
+    else:
+        host, port = "127.0.0.1", 0
+        sock_path = Path(parsed.path) if parsed.path else TUNNEL_SOCK_PATH
+        target = str(sock_path)
+        bind_args = ["--port", "0", "--unixsocket", target, "--unixsocketperm", "700"]
+
+    if _ping_endpoint(sock_path=sock_path, host=host, port=port):
+        log.info(f"[Boot] Reusing active tunnel at {target}")
         return
 
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     KV_DIR.mkdir(parents=True, exist_ok=True)
     _cleanup_stale_valkey()
 
-    valkey_bin = _resolve_valkey_bin()
     cmd = [
-        valkey_bin,
-        "--port", "0",
-        "--unixsocket", str(TUNNEL_SOCK_PATH),
-        "--unixsocketperm", "700",
+        _resolve_valkey_bin(),
+        *bind_args,
         "--pidfile", str(TUNNEL_PID_PATH),
         "--dir", str(KV_DIR),
         "--appendonly", "no",
         "--save", "",
     ]
 
-    log.info(f"[Boot] Starting embedded Valkey on {TUNNEL_SOCK_PATH}...")
+    log.info(f"[Boot] Starting embedded Valkey on {target}...")
     _valkey_proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
@@ -113,7 +140,7 @@ async def ensure_embedded_valkey() -> None:
     )
 
     for _ in range(50):
-        if _ping_unix_socket(TUNNEL_SOCK_PATH):
+        if _ping_endpoint(sock_path=sock_path, host=host, port=port):
             log.info(f"[Boot] Embedded Valkey ready (PID {_valkey_proc.pid}).")
             return
         if _valkey_proc.returncode is not None:
@@ -121,7 +148,7 @@ async def ensure_embedded_valkey() -> None:
             raise RuntimeError(f"[Boot] Embedded Valkey exited prematurely: {err}")
         await asyncio.sleep(0.05)
 
-    raise RuntimeError(f"[Boot] Timed out waiting for Valkey socket at {TUNNEL_SOCK_PATH}")
+    raise RuntimeError(f"[Boot] Timed out waiting for Valkey at {target}")
 
 
 async def stop_embedded_valkey() -> None:
@@ -352,8 +379,8 @@ async def teardown():
 
     await TunnelFactory.close_all()
     await stop_embedded_valkey()
+    TUNNEL_URL_PATH.unlink(missing_ok=True)
     log.info("[Boot] Resource cleanup complete.")
-
 
 if __name__ == "__main__":
     PhaseReactor.ignite(main_coro_func=main_async, teardown_hook=teardown)
