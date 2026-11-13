@@ -76,17 +76,17 @@ class RuntimeAnchor(IPhaseAtor):
         self.log.crit(f"Critical fault in Master Task [{task.get_name()}]: {exc}")
         self.log.warn(f"[{task.get_name()}] has been isolated. NodeRuntime continues operating.")
 
-    @property
-    def local_manifold(self):
-        if hasattr(registry, 'registered_nodes'):
-            return registry.registered_nodes
+    # @property
+    # def local_manifold(self):
+    #     if hasattr(registry, 'registered_nodes'):
+    #         return registry.registered_nodes
             
-        if hasattr(registry, 'registered_daemons'):
-            daemons = registry.registered_daemons
-            if daemons and any(hasattr(meta, 'contract') for meta in daemons.values()):
-                return daemons
+    #     if hasattr(registry, 'registered_daemons'):
+    #         daemons = registry.registered_daemons
+    #         if daemons and any(hasattr(meta, 'contract') for meta in daemons.values()):
+    #             return daemons
                 
-        return {}
+    #     return {}
 
     @property
     def ator_id(self) -> str:
@@ -134,13 +134,13 @@ class RuntimeAnchor(IPhaseAtor):
             self.executor.node = self
 
         watch_dir = find_current_self()
-        self.log.info(f"Loaded {len(self.local_manifold)} local phasenodes from registry.")
+        # self.log.info(f"Loaded {len(self.local_manifold)} local phasenodes from registry.")
         
         await self.register_node()
 
         all_recepts = set()
-        for meta in self.local_manifold.values():
-            all_recepts.update(getattr(meta.contract, "recept", []))
+        # for meta in self.local_manifold.values():
+        #     all_recepts.update(getattr(meta.contract, "recept", []))
 
         if not all_recepts:
             all_recepts = {"system:signal", "system:ping"}
@@ -266,12 +266,13 @@ class RuntimeAnchor(IPhaseAtor):
 
     async def register_node(self):
         capabilities = {}
-        for fqn, meta in self.local_manifold.items():
-            contract = meta.contract
-            capabilities[fqn] = {
-                "requires": list(contract.requires),
-                "emits": list(contract.emits)
-            }
+        # for fqn, meta in self.local_manifold.items():
+        #     contract = meta.contract
+        #     capabilities[fqn] = {
+        #         "requires": list(contract.requires),
+        #         "emits": list(contract.emits)
+        #     }
+
         data = {
             "node_id": self.node_id,
             "started_at": time.time(),
@@ -299,14 +300,14 @@ class RuntimeAnchor(IPhaseAtor):
         node_key = runtime_keys.get("node", node_id=self.node_id)
         await self.tunnel.delete(node_key)
         
-        for fqn, meta in self.local_manifold.items():
-            contract = meta.contract
-            for req_key in contract.requires:
-                req_idx_key = runtime_keys.get("index_requires", req_key=req_key)
-                await self.tunnel.srem(req_idx_key, self.node_id)
-            for emit_key in contract.emits:
-                emit_idx_key = runtime_keys.get("index_emits", emit_key=emit_key)
-                await self.tunnel.srem(emit_idx_key, self.node_id)
+        # for fqn, meta in self.local_manifold.items():
+        #     contract = meta.contract
+        #     for req_key in contract.requires:
+        #         req_idx_key = runtime_keys.get("index_requires", req_key=req_key)
+        #         await self.tunnel.srem(req_idx_key, self.node_id)
+        #     for emit_key in contract.emits:
+        #         emit_idx_key = runtime_keys.get("index_emits", emit_key=emit_key)
+        #         await self.tunnel.srem(emit_idx_key, self.node_id)
                 
         self.log.info("Node and capability indexes deregistered.")
 

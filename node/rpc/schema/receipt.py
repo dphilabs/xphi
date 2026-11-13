@@ -1,4 +1,4 @@
-# xphi.node.schema.receipt
+# xphi.node.rpc.schema.receipt
 from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional

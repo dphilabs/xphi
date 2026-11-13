@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from xphi.arch.contract.protocol.rpc import WorkerContext, _build_error
 from xphi.arch.model.schema.audit import BilledExecutionRequest
 
-from xphi.node.schema.receipt import EdgeState, ClearingReceiptRequest
+from xphi.node.rpc.schema.receipt import EdgeState, ClearingReceiptRequest
 from xphi.node.ops.fuel.config import tier_config, fuel_config
 from xphi.node.runtime.wasm.broker import WasmMethod
 from xphi.node.runtime.wasm.quota import Tier
