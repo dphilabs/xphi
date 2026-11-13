@@ -9,7 +9,7 @@ description = "Internal Core Engine for Fiber (Not for standalone)"
 requires-python = ">=3.12"
 dependencies = [
     "uvloop", "redis==8.0.1", "pyyaml", "watchdog", "rocksdict", "requests", "deprecated", "Pillow", "tiktoken", "PyNaCl",
-    "libcst", "pydantic", "httpx", "eclipse-zenoh", "mcp",
+    "libcst", "pydantic", "pydantic_settings", "httpx", "eclipse-zenoh", "mcp",
     "tinytag", "dataclasses_json", "valkeylite==9.1.*; sys_platform != 'win32'"
 ]
 

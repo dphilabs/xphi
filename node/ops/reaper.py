@@ -19,7 +19,7 @@ DEFAULT_TARGET_TAGS = [
     "dphi",
     "deno",
     "fiber",
-    "fiber.plane.mcp.worker",
+    "fiber.node.mcp.worker",
     "multiprocessing.spawn",
     "multiprocessing.resource_tracker",
     "valkey-server",

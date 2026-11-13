@@ -180,12 +180,12 @@ compatibility_flags = ["python_workers"]
     async def _deploy_microservices(self) -> str:
         """
         Deploys Dual V8 Isolates to Cloudflare in strict Service Binding dependency order
-        (`xphi-python-node` first, then `xphi-gateway-node`), unless a remote BYOC URL
+        (`xphi-python-node` first, then `xphi-gateway-node`), unless a remote KYOC URL
         is already explicitly provided via `XPHI_WASM_PLANE=flare:https://...`.
         """
         explicit_remote = FlareTunnelFactory._resolve_edge_url("")
         if explicit_remote and not FlareTunnelFactory._is_local_endpoint(explicit_remote):
-            log.info(f"[DEPLOY] Target BYOC Edge URL already specified ({explicit_remote}). Skipping wrangler deploy.")
+            log.info(f"[DEPLOY] Target KYOC Edge URL already specified ({explicit_remote}). Skipping wrangler deploy.")
             self._deployed_url = explicit_remote
             return explicit_remote
 
