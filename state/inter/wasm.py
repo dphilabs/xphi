@@ -159,14 +159,10 @@ class WasmInterpreter:
         except Exception as e:
             raise ProtocolError(f"Failed to initialize Wasmtime engine: {e}")
 
-    # =========================================================================
-    # CosmWasm Memory & Host Function Extensions
-    # =========================================================================
     def _read_region(self, caller: Any, ptr: int) -> bytes:
         memory = self.memory if isinstance(caller, wasmtime.Store) else caller.get("memory")
         region_header = bytes(memory.read(caller, ptr, ptr + 12))
         
-        # XML 파서 버그를 피하기 위해 포맷 문자열 안전하게 생성
         fmt = "<" + "III"
         offset, capacity, length = struct.unpack(fmt, region_header)
         return bytes(memory.read(caller, offset, offset + length))

@@ -137,6 +137,7 @@ async def ensure_embedded_valkey() -> None:
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
     )
 
     for _ in range(50):
@@ -362,6 +363,8 @@ async def teardown():
     for task in list(_background_tasks):
         if not task.done():
             task.cancel()
+    if _background_tasks:
+        await asyncio.gather(*_background_tasks, return_exceptions=True)  # <- 취소 완료 대기
 
     try:
         if AnchorStore._instance is not None:
