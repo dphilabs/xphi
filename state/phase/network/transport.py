@@ -29,7 +29,6 @@ def _loads_obj(raw: str | bytes) -> Any:
         return _json_fast.loads(raw)
     return json.loads(raw)
 
-
 class DummyProcess:
     """Pseudo-process handle maintaining interface parity with asyncio.subprocess.Process."""
     def __init__(self, pid: int = 99999):

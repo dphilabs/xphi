@@ -349,38 +349,84 @@ async def main_async():
 
     await _node_instance.start()
 
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
+    def _on_shutdown_signal():
+        if not stop_event.is_set():
+            log.info("[Boot] Shutdown signal (SIGINT/SIGTERM) received. Initiating graceful stop...")
+            stop_event.set()
+            if _node_instance is not None:
+                for attr in ("_stop_event", "stop_event"):
+                    ev = getattr(_node_instance, attr, None)
+                    if isinstance(ev, asyncio.Event):
+                        ev.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _on_shutdown_signal)
+        except (NotImplementedError, RuntimeError):
+            pass
+
     log.info("[Boot] Control Plane and Embedded Node fully operational.")
     log.info("[Boot] Entering observation mode (External layers delegated to Daemons).")
-    await _node_instance.wait_until_stopped()
 
+    wait_task = asyncio.create_task(_node_instance.wait_until_stopped())
+    sig_task = asyncio.create_task(stop_event.wait())
+    try:
+        await asyncio.wait([wait_task, sig_task], return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in (wait_task, sig_task):
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(wait_task, sig_task, return_exceptions=True)
 
 async def teardown():
     global _node_instance
     log.info("[Boot] Releasing system resources...")
-    if _node_instance and getattr(_node_instance, "running", False):
-        await _node_instance.shutdown()
+    
+    # 1. RuntimeAnchor shutdown에 타임아웃 보장
+    if _node_instance:
+        try:
+            await asyncio.wait_for(_node_instance.shutdown(), timeout=5.0)
+        except asyncio.TimeoutError:
+            log.warning("[Boot] RuntimeAnchor shutdown timed out. Force clearing...")
+            # 멀티프로세스 자식들 강제 킬 보장
+            for p in getattr(_node_instance, "worker_processes", []):
+                if p.is_alive():
+                    p.kill()
 
+    # 2. 백그라운드 태스크 정리
     for task in list(_background_tasks):
         if not task.done():
             task.cancel()
     if _background_tasks:
-        await asyncio.gather(*_background_tasks, return_exceptions=True)  # <- 취소 완료 대기
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*_background_tasks, return_exceptions=True),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            pass
 
+    # 3. 인프라 자원 안전 클로징
     try:
         if AnchorStore._instance is not None:
             AnchorStore._instance.close()
-            log.info("[Boot] AnchorStore lock safely released.")
-    except Exception as e:
-        log.warning(f"[Boot] Error while releasing AnchorStore lock: {e}")
+    except Exception:
+        pass
 
     if WasmBroker._shared_instance is not None:
         try:
-            await WasmBroker._shared_instance.close()
-            log.info("[Boot] Shared WASM Broker closed cleanly.")
-        except Exception as e:
-            log.warning(f"[Boot] Error while closing Shared WASM Broker: {e}")
+            await asyncio.wait_for(WasmBroker._shared_instance.close(), timeout=2.0)
+        except Exception:
+            pass
 
-    await TunnelFactory.close_all()
+    try:
+        await asyncio.wait_for(TunnelFactory.close_all(), timeout=2.0)
+    except Exception:
+        pass
+
     await stop_embedded_valkey()
     TUNNEL_URL_PATH.unlink(missing_ok=True)
     log.info("[Boot] Resource cleanup complete.")
