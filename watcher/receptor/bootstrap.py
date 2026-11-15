@@ -29,7 +29,7 @@ SELF_ROOT = find_current_self()
 
 def _resolve_watch_targets(watch_dir: str) -> dict[Path, str]:
     targets: dict[Path, str] = {}
-    for pkg_name in ("fiber", "xphi"):
+    for pkg_name in ("fiber", "xphi", "reflexor"):
         spec = importlib.util.find_spec(pkg_name)
         if spec and spec.submodule_search_locations:
             targets[Path(spec.submodule_search_locations[0]).resolve()] = pkg_name

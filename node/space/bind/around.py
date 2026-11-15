@@ -18,7 +18,7 @@ CURRENT_DIR = CURRENT_SCRIPT.parent
 PTH_FILENAME = "xphi.pth"
 BOUND = "bound.json"
 ORIGIN = "origin.json"
-CORES = ["fiber", "xphi", "phase"]
+CORES = ["fiber", "xphi", "reflexor"]
 
 ## Default minimum skeleton to prevent resolver crashes if bound.json doesn't exist
 DEFAULT_BOUND_SKELETON = {

@@ -10,7 +10,7 @@ from xphi.arch.bound.adapter.pta import (
     PtaPointer,
 )
 from xphi.arch.bound.adapter.state import StateAdapter
-from xphi.arch.contract.fsm import (
+from xphi.arch.contract.reflex.fsm import (
     END_TOKEN,
     MAX_BLOB_BYTES,
     CompactKey,

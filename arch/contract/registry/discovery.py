@@ -40,7 +40,7 @@ def _walk_and_discover(root: Path, base_fqn: str = "", apply_quarantine: bool = 
     if not root.exists():
         return
 
-    exclude_patterns = {"dev/tester", "space/time"}
+    exclude_patterns = {"dev/tester", "space/time", "units/templates"}
     if apply_quarantine:
         exclude_patterns.update({"venv", ".venv", "env", "node_modules"})
         try:
@@ -109,6 +109,7 @@ def discover_modules(workspace_root: Path) -> None:
     log.info("\n[Discover] Initiating system-wide module discovery...")
 
     discover_core_package("fiber")
+    discover_core_package("reflexor")
     discover_core_package("xphi")
 
     resolved_root = workspace_root.resolve()
