@@ -21,6 +21,7 @@ from xphi.arch.contract.reflex.fsm import (
 
 _PATH_TOKEN_RE = re.compile(r"\$\.([A-Za-z_][A-Za-z0-9_.]*)")
 _SENTINEL = object()
+_JSON_LITERALS: dict[str, Any] = {"true": True, "false": False, "null": None}
 
 _CMP_OPS: dict[type[ast.cmpop], Callable[[Any, Any], bool]] = {
     ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Gt: operator.gt, ast.GtE: operator.ge,
@@ -64,14 +65,17 @@ def resolve_path(ctx: dict[str, Any], path: str, default: Any = _SENTINEL) -> An
 
 
 def bind_parameters(
-    params: dict[str, Any], ctx: dict[str, Any]
+    params: dict[str, Any],
+    ctx: dict[str, Any],
+    *,
+    _inherited_opt: set[str] | None = None,
 ) -> tuple[dict[str, Any], tuple[str, ...], tuple[str, str] | None]:
     ext = params.get("__fiber_extensions") if isinstance(params.get("__fiber_extensions"), dict) else {}
     proj = ext.get("Projection") if isinstance(ext.get("Projection"), dict) else {}
     each = ext.get("Each") if isinstance(ext.get("Each"), dict) else {}
 
     extract_keys = tuple(p.removeprefix("$.") for p in proj.get("extract_keys", ()))
-    opt_keys = set(proj.get("optional_in", ()))
+    opt_keys = {p.removeprefix("$.") for p in proj.get("optional_in", ())} | (_inherited_opt or set())
     each_spec = (each["item"], each["over"].removeprefix("$.")) if "item" in each and "over" in each else None
 
     clean = {k: v for k, v in params.items() if k != "__fiber_extensions"}
@@ -85,11 +89,13 @@ def bind_parameters(
     for k, v in clean.items():
         if k.endswith(".$") and isinstance(v, str):
             dst = k[:-2]
-            val = resolve_path(ctx, v, default=_SENTINEL) if dst in opt_keys else resolve_path(ctx, v)
+            src_leaf = v.removeprefix("$.").split(".")[-1]
+            is_opt = (dst in opt_keys) or (src_leaf in opt_keys)
+            val = resolve_path(ctx, v, default=_SENTINEL) if is_opt else resolve_path(ctx, v)
             if val is not _SENTINEL:
                 bound[dst] = val
         elif isinstance(v, dict):
-            bound[k], _, _ = bind_parameters(v, ctx)
+            bound[k], _, _ = bind_parameters(v, ctx, _inherited_opt=opt_keys)
         else:
             bound[k] = v
     return bound, extract_keys, each_spec
@@ -120,7 +126,7 @@ def parse_if_ast(expr: str) -> tuple[ast.Expression, dict[str, str]]:
     for n in ast.walk(tree):
         if isinstance(n, (ast.Call, ast.Attribute, ast.Subscript, ast.Lambda, ast.ListComp, ast.DictComp)):
             raise ValueError(f"Unsafe syntax in choice expression: '{expr}'")
-        if isinstance(n, ast.Name) and n.id not in path_map:
+        if isinstance(n, ast.Name) and n.id not in path_map and n.id not in _JSON_LITERALS:
             raise ValueError(f"Unbound identifier '{n.id}' in '{expr}'")
     return tree, path_map
 
@@ -130,7 +136,10 @@ def eval_choice_if(expr: str, ctx: dict[str, Any]) -> bool:
     def _ev(n: ast.AST) -> Any:
         if isinstance(n, ast.Constant): return n.value
         if isinstance(n, (ast.Tuple, ast.List)): return [_ev(e) for e in n.elts]
-        if isinstance(n, ast.Name): return extract_json_path(ctx, path_map[n.id])
+        if isinstance(n, ast.Name):
+            if n.id in _JSON_LITERALS:
+                return _JSON_LITERALS[n.id]
+            return extract_json_path(ctx, path_map[n.id])
         if isinstance(n, ast.UnaryOp):
             v = _ev(n.operand)
             return (not v) if isinstance(n.op, ast.Not) else (-v if isinstance(n.op, ast.USub) else +v)
@@ -220,9 +229,16 @@ def verify_asl(asl: dict[str, Any]) -> list[str]:
                 if isinstance(node["Default"], str) and node["Default"]: edges.append(node["Default"])
                 else: errors.append(f"[{name}] Invalid Default.")
         else:
-            has_next, has_end = isinstance(node.get("Next"), str) and bool(node["Next"]), node.get("End") is True
-            if has_next == has_end: errors.append(f"[{name}] Specify exactly one of 'Next' or 'End: true'.")
-            elif has_next: edges.append(node["Next"])
+            nxt_val = node.get("Next")
+            is_valid_next = (
+                (isinstance(nxt_val, str) and bool(nxt_val))
+                or (isinstance(nxt_val, list) and bool(nxt_val) and all(isinstance(x, str) and x for x in nxt_val))
+            )
+            has_end = node.get("End") is True
+            if is_valid_next == has_end: errors.append(f"[{name}] Specify exactly one of 'Next' or 'End: true'.")
+            elif isinstance(nxt_val, str): edges.append(nxt_val)
+            elif isinstance(nxt_val, list): edges.extend(nxt_val)
+
             if stype == "Task":
                 res = node.get("Resource", "")
                 scheme = "arn" if isinstance(res, str) and res.startswith("arn:") else parse_resource_uri(res).scheme

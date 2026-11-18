@@ -333,16 +333,27 @@ class FSMCompiler:
 
         return self._fallback_python_compile(raw_ir)
 
-    async def acompile_from_asl(self, asl_schema: Dict[str, Any], trace_id: str = "turn_0") -> CompiledBundle:
-        """[Async] Distributed compilation and static verification via WasmBroker & TaskWasm daemon."""
-        sig = self._build_fragment_sig(asl_schema, trace_id)
+    async def acompile_from_asl(self, asl_schema, trace_id="turn_0"):
+        cas_pool = {}
+        sig = self._build_fragment_sig(asl_schema, trace_id, cas_pool)
         raw_ir = self.projector.project_compact_blob(sig)
 
         payload = FsmAdapter.build_compile_payload(trace_id=trace_id, compact_ir=raw_ir)
         res = await WasmBroker.get_shared().execute(code=payload, context={"fuel": 2000})
         if res.output:
-            return self._finalize_bundle_from_wasm(res.output)
+            return self._finalize_bundle_from_wasm(res.output, cas_pool)
         raise ValueError(f"FSM Broker Compile Failed: {res.error}")
+
+    # async def acompile_from_asl(self, asl_schema: Dict[str, Any], trace_id: str = "turn_0") -> CompiledBundle:
+    #     """[Async] Distributed compilation and static verification via WasmBroker & TaskWasm daemon."""
+    #     sig = self._build_fragment_sig(asl_schema, trace_id)
+    #     raw_ir = self.projector.project_compact_blob(sig)
+
+    #     payload = FsmAdapter.build_compile_payload(trace_id=trace_id, compact_ir=raw_ir)
+    #     res = await WasmBroker.get_shared().execute(code=payload, context={"fuel": 2000})
+    #     if res.output:
+    #         return self._finalize_bundle_from_wasm(res.output)
+    #     raise ValueError(f"FSM Broker Compile Failed: {res.error}")
 
     @staticmethod
     def _validate_phase(signature: FragmentSig) -> None:
