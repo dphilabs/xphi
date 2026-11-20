@@ -1,6 +1,4 @@
 # xphi.arch.contract.protocol.flow
-## @lineage: xphi.state.topos.flow
-## @lineage: xphi.arch.contract.flow
 import uuid
 import asyncio
 import enum

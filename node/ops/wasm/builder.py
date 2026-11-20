@@ -13,7 +13,7 @@ from xphi.watcher.plane.emitter import get_emitter
 
 log = get_emitter("wasm.builder")
 
-THEORIA_ROOT = resolve_path("theoria")
+THEORIA_WASM_ROOT = resolve_path("theoria") / "wasm"
 TIME_ROOT = resolve_path("time")
 REGISTRY_FILE = TIME_ROOT / "registry.json"
 
@@ -58,7 +58,7 @@ class WasmBuilder(BaseTracer):
         self.log.info("[Builder] Extracting JSON Schema using Standard Binary...")
         await asyncio.to_thread(os.makedirs, TIME_ROOT, exist_ok=True)
 
-        phase_dir = THEORIA_ROOT / "phase"
+        phase_dir = THEORIA_WASM_ROOT / "phase"
 
         code, out, err = await self.boundary.run_command(
             ["cargo", "run", "--bin", "schema", "--quiet"],
@@ -157,7 +157,7 @@ class WasmBuilder(BaseTracer):
     async def build_and_deploy(self, projects_to_build: List[Dict]) -> bool:
         await self.boundary.run_command(
             ["rustup", "target", "add", "wasm32-unknown-unknown"],
-            cwd=str(THEORIA_ROOT)
+            cwd=str(THEORIA_WASM_ROOT)
         )
 
         await asyncio.to_thread(os.makedirs, TIME_ROOT, exist_ok=True)
@@ -165,7 +165,7 @@ class WasmBuilder(BaseTracer):
         for proj in projects_to_build:
             proj_name = proj["name"]
             proj_env = proj.get("env")
-            proj_dir = THEORIA_ROOT / proj_name
+            proj_dir = THEORIA_WASM_ROOT / proj_name
 
             if not await self._compile_wasm_project(proj_dir, proj_name, proj_env):
                 return False
