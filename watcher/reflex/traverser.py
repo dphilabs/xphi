@@ -1,5 +1,4 @@
 # xphi.watcher.reflex.traverser
-## @lineage: xphi.node.runtime.fsm.traverser
 from dataclasses import dataclass, field, replace
 from typing import Dict, Any, List, Optional, Callable, Awaitable, Tuple, Sequence, Union
 
