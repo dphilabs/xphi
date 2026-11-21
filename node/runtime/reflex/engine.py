@@ -7,6 +7,7 @@ from typing import Any
 
 from xphi.arch.contract.reflex.flow import CompiledChoice, CompiledNode, CompiledTask, CompiledTerminal
 from xphi.arch.contract.reflex.fsm import ASL_CHOICE_OP_MAP, END_TOKEN, EdgeMode, NodeType, parse_resource_uri
+from xphi.arch.contract.reflex.multiflow import remap_of, rename_result
 from xphi.arch.contract.registry.flow import FlowDSL, FlowRegistry, load_sample_registry
 from xphi.arch.xor.fsm.compiler import FSMCompiler
 from xphi.arch.xor.fsm.parser import ASLValidationError, apply_projection, bind_parameters, eval_choice_rule, verify_asl
@@ -202,6 +203,8 @@ class FlowEngine:
                 self.add_asl_choice("step", name, node.rules, node.default_state, lambda: self.context)
 
     def _make_task_runner(self, task: CompiledTask) -> Callable[[], None]:
+        remap = remap_of(task.params)
+
         def _run() -> None:
             if self._dispatcher is None:
                 raise FlowExecutionError(f"No dispatcher configured for task '{task.name}'.")
@@ -217,7 +220,7 @@ class FlowEngine:
                 extract_keys = task.extract_keys or dyn_extract
                 for elem in items:
                     iter_params, _, _ = bind_parameters(task.params, {**self.context, each_item: elem})
-                    out = self._dispatcher(task.scheme, task.target, iter_params)
+                    out = rename_result(self._dispatcher(task.scheme, task.target, iter_params), remap)
                     if isinstance(out, dict):
                         if out.get("_hitl_yield") is True:
                             self.context["_hitl_yield"] = True
@@ -231,7 +234,7 @@ class FlowEngine:
                 self.context.update(collected)
                 return
 
-            out = self._dispatcher(task.scheme, task.target, bound_params)
+            out = rename_result(self._dispatcher(task.scheme, task.target, bound_params), remap)
             if isinstance(out, dict) and out.get("_hitl_yield") is True:
                 self.context["_hitl_yield"] = True
                 self.context["_hitl_ticket"] = out.get("_hitl_ticket", "")

@@ -14,7 +14,8 @@ SCHEMES: tuple[str, ...] = ("py", "exec", "mcp", "llm", "flow")
 BASE_SHAPES: frozenset[str] = frozenset({"val", "text", "num", "bool", "obj", "file"})
 
 _SHAPE_RE = re.compile(r"^(?P<base>[a-z]+)(?:<(?P<ext>[A-Za-z0-9_.+-]+)>)?(?P<list>\[\])?$")
-_KEY_RE = re.compile(r"^(?P<key>[A-Za-z_][\w.]*)(?P<opt>\?)?$")
+_KEY_RE = re.compile(r"^(?P<key>[A-Za-z_]\w*(?::[A-Za-z_]\w*)?(?:\.[A-Za-z_]\w*)*)(?P<opt>\?)?$")
+_TYPE_SEP_RE = re.compile(r"^(?P<key>[^:]+(?::[A-Za-z_]\w*\.[A-Za-z_][\w.]*)?)\s*:\s*(?P<shape>.+)$")
 
 @dataclass(frozen=True, slots=True)
 class AuthReq:
@@ -139,14 +140,18 @@ def _split_top_level(body: str) -> list[str]:
     return [p for p in parts if p]
 
 def parse_annotated_args(body: str) -> ArgSpec:
-    """Parse `key[?][: shape][=default]` items, including namespaced `step.slot=default`."""
+    """Parse `key[?][: shape][=default]` items, including namespaced `unit[:entry].slot=default`."""
     reqs, optional = [], []
     defaults: dict[str, Any] = {}
     shapes: dict[str, Shape] = {}
 
     for part in _split_top_level(body):
         head, has_default, raw_default = part.partition("=")
-        key_part, _, shape_part = head.partition(":")
+        tm = _TYPE_SEP_RE.match(head.strip())
+        if tm:
+            key_part, shape_part = tm["key"], tm["shape"]
+        else:
+            key_part, shape_part = head, ""
         m = _KEY_RE.match(key_part.strip())
         if not m:
             raise ValueError(f"Invalid contract key '{key_part.strip()}' in '{part}'.")
@@ -286,6 +291,7 @@ class StepSpec:
     bindings: dict[str, str] = field(default_factory=dict)  # dst -> src
     each_item: str | None = None
     each_over: str | None = None
+    remap: dict[str, str] = field(default_factory=dict)  # new_var -> out_key
 
     @property
     def is_each(self) -> bool:
