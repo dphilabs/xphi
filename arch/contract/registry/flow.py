@@ -16,6 +16,12 @@ from xphi.arch.contract.reflex.flow import (
     UnitContract,
     parse_annotated_args,
 )
+from xphi.arch.contract.reflex.multiflow import (
+    REMAP_KEY,
+    expand_entries,
+    remap_out_keys,
+    split_remap,
+)
 from xphi.node.space.bind.resolver import resolve_path
 
 FLOW_DSL_ROOT = resolve_path("compats") / "flow"
@@ -53,9 +59,8 @@ class FlowRegistry:
     def load_dict(self, data: dict[str, Any]) -> FlowRegistry:
         for kind, register_fn in (("units", self.register_unit), ("flows", self.register_flow)):
             for name, meta in data.get(kind, {}).items():
-                spec = meta if isinstance(meta, str) else meta["flow"]
-                desc = "" if isinstance(meta, str) else meta.get("desc", "")
-                register_fn(name, spec, desc)
+                for key, spec, desc in expand_entries(name, meta):
+                    register_fn(key, spec, desc)
         return self
 
     def load_json(self, path: str | Path = SAMPLE_PATH) -> FlowRegistry:
@@ -139,6 +144,7 @@ class FlowDSL:
             heal_mode = "fallback" if rest.startswith(">") else "retry"
             heal_target = rest.lstrip(">").rstrip(")").strip()
 
+        base, remap = split_remap(base)
         name, _, bind_body = base.partition("[")
         bindings = {
             dst.strip(): src.strip()
@@ -147,7 +153,13 @@ class FlowDSL:
             for dst, _, src in [pair.partition("=")]
         }
 
-        return StepSpec(name=name.strip(), heal_target=heal_target, heal_mode=heal_mode, bindings=bindings)
+        return StepSpec(
+            name=name.strip(),
+            heal_target=heal_target,
+            heal_mode=heal_mode,
+            bindings=bindings,
+            remap=remap,
+        )
 
     @classmethod
     def parse_flow(cls, name: str, flow_str: str, desc: str = "") -> FlowContract:
@@ -220,14 +232,18 @@ class FlowDSL:
             if src in local_pool:
                 params[f"{k}.$"] = f"$.{src}"
 
+        out_keys = remap_out_keys(contract.out_keys, step.remap)
+
         # Fiber runtime extensions (Projection, Optional inputs, Each fan-out)
         fiber_ext: dict[str, Any] = {}
-        if contract.out_keys or contract.in_optional:
+        if out_keys or contract.in_optional or step.remap:
             proj: dict[str, Any] = {}
-            if contract.out_keys:
-                proj["extract_keys"] = [f"$.{k}" for k in contract.out_keys]
+            if out_keys:
+                proj["extract_keys"] = [f"$.{k}" for k in out_keys]
             if contract.in_optional:
                 proj["optional_in"] = list(contract.in_optional)
+            if step.remap:
+                proj[REMAP_KEY] = dict(step.remap)
             fiber_ext["Projection"] = proj
         if step.is_each and step.each_item and step.each_over:
             fiber_ext["Each"] = {"item": step.each_item, "over": f"$.{step.each_over}"}
@@ -237,7 +253,7 @@ class FlowDSL:
         node: dict[str, Any] = {"Type": "Task", "Resource": contract.resource_uri}
         if params:
             node["Parameters"] = params
-        return node, contract.out_keys
+        return node, out_keys
 
     @classmethod
     def compile_to_asl(
