@@ -9,7 +9,7 @@ from xphi.node.runtime.wasm.broker import WasmBroker
 from xphi.node.runtime.wasm.quota import QuotaPolicy
 from xphi.watcher.plane.emitter import get_emitter
 
-from xphi.arch.contract.reflex.fsm import (
+from xphi.arch.reflex.fsm import (
     MAX_BLOB_BYTES,
     CAS_PREFIX,
     BRANCH_PREFIX,

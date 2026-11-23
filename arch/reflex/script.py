@@ -1,4 +1,4 @@
-# xphi.arch.contract.reflex.script
+# xphi.arch.reflex.script
 from __future__ import annotations
 
 import hashlib

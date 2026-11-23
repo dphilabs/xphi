@@ -1,24 +1,32 @@
-# xphi.arch.contract.reflex.flow
+# xphi.arch.reflex.flow
 from __future__ import annotations
-import ast
-import re
-from collections.abc import Callable
+
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from inspect import signature
 from typing import Any, TypeAlias, get_type_hints
 
+from xphi.arch.reflex.grammar.lexer import ParsedShape, split_clause_items
+from xphi.arch.reflex.grammar.clause import parse_arg_clause, parse_auth_token, parse_mcp_target_expr, parse_shape_expr
+from xphi.arch.reflex.grammar.chain import split_remap, split_unit_ref
+from xphi.arch.reflex.grammar.header import parse_header_flow_tags
+
 NodeAction: TypeAlias = Callable[..., dict[str, Any] | None] | str
 
 ACCOUNT_SLOT = "account"
+REMAP_KEY = "remap"
 SCHEMES: tuple[str, ...] = ("py", "exec", "mcp", "llm", "flow")
 BASE_SHAPES: frozenset[str] = frozenset({"val", "text", "num", "bool", "obj", "file"})
 
-_SHAPE_RE = re.compile(r"^(?P<base>[a-z]+)(?:<(?P<ext>[A-Za-z0-9_.+-]+)>)?(?P<list>\[\])?$")
-_KEY_RE = re.compile(r"^(?P<key>[A-Za-z_][\w.]*)(?P<opt>\?)?$")
+
+# =====================================================================
+# 1. Auth, Shape & Clause Argument Specifications
+# =====================================================================
 
 @dataclass(frozen=True, slots=True)
 class AuthReq:
     """User-app credential requirement metadata (`provider[:scope]`)."""
+
     provider: str
     scope: str | None = None
 
@@ -35,26 +43,28 @@ class AuthReq:
 
     @classmethod
     def parse(cls, token: str) -> AuthReq:
-        provider, _, scope = token.strip().partition(":")
-        if not provider:
-            raise ValueError(f"Invalid auth requirement '{token.strip()}'.")
-        return cls(provider=provider.strip(), scope=scope.strip() or None)
+        node = parse_auth_token(token)
+        return cls(provider=node.provider, scope=node.scope)
 
     @classmethod
     def parse_list(cls, body: str) -> tuple[AuthReq, ...]:
-        tokens = [t.strip() for t in body.split(",") if t.strip()]
+        if not body.strip():
+            return ()
+        try:
+            tokens = split_clause_items(body)
+        except ValueError as exc:
+            raise ValueError(f"Empty auth token in '{body}'.") from exc
         return tuple(cls.parse(t) for t in tokens)
 
     @classmethod
     def for_mcp_target(cls, target: str) -> AuthReq:
         """Implicit requirement of `mcp(server/tool)`: the `server` connection."""
-        server = target.strip().partition("/")[0]
-        if not server:
-            raise ValueError(f"Invalid mcp target '{target.strip()}', expected 'server/tool'.")
+        server, _ = parse_mcp_target_expr(target)
         return cls(provider="mcp", scope=server)
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.scope}" if self.scope else self.provider
+
 
 @dataclass(frozen=True, slots=True)
 class Shape:
@@ -65,13 +75,19 @@ class Shape:
     is_list: bool = False
 
     @classmethod
+    def from_parsed(cls, node: ParsedShape, raw_token: str = "") -> Shape:
+        if node.base not in BASE_SHAPES:
+            label = raw_token.strip() or node.base
+            raise ValueError(f"Unknown shape '{label}'.")
+        if node.ext and node.base != "file":
+            raise ValueError(f"Shape qualifier '<{node.ext}>' is only allowed on 'file'.")
+        return cls(base=node.base, ext=node.ext, is_list=node.is_list)
+
+    @classmethod
     def parse(cls, token: str) -> Shape:
-        m = _SHAPE_RE.match(token.strip())
-        if not m or m["base"] not in BASE_SHAPES:
-            raise ValueError(f"Unknown shape '{token.strip()}'.")
-        if m["ext"] and m["base"] != "file":
-            raise ValueError(f"Shape qualifier '<{m['ext']}>' is only allowed on 'file'.")
-        return cls(base=m["base"], ext=m["ext"], is_list=bool(m["list"]))
+        cleaned = token.strip()
+        node = parse_shape_expr(cleaned)
+        return cls.from_parsed(node, raw_token=cleaned)
 
     def element(self) -> Shape:
         return Shape(base=self.base, ext=self.ext, is_list=False)
@@ -97,6 +113,7 @@ class Shape:
         ext = f"<{self.ext}>" if self.ext else ""
         return f"{self.base}{ext}{'[]' if self.is_list else ''}"
 
+
 @dataclass(frozen=True, slots=True)
 class ArgSpec:
     """Parsed `in(...)` / `cfg(...)` / `out(...)` clause body."""
@@ -110,59 +127,137 @@ class ArgSpec:
     def all_keys(self) -> tuple[str, ...]:
         return self.reqs + self.optional
 
-def _split_top_level(body: str) -> list[str]:
-    """Split on commas outside quotes and brackets."""
-    parts, buf = [], []
-    depth, quote, escaped = 0, "", False
-    for ch in body:
-        if quote:
-            buf.append(ch)
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == quote:
-                quote = ""
-            continue
-        if ch in "'\"":
-            quote = ch
-        elif ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            parts.append("".join(buf).strip())
-            buf = []
-            continue
-        buf.append(ch)
-    parts.append("".join(buf).strip())
-    return [p for p in parts if p]
 
 def parse_annotated_args(body: str) -> ArgSpec:
-    """Parse `key[?][: shape][=default]` items, including namespaced `step.slot=default`."""
-    reqs, optional = [], []
+    """Convert LL-parsed `ParsedArgItem` CST nodes into a validated `ArgSpec`."""
+    reqs: list[str] = []
+    optional: list[str] = []
     defaults: dict[str, Any] = {}
     shapes: dict[str, Shape] = {}
 
-    for part in _split_top_level(body):
-        head, has_default, raw_default = part.partition("=")
-        key_part, _, shape_part = head.partition(":")
-        m = _KEY_RE.match(key_part.strip())
-        if not m:
-            raise ValueError(f"Invalid contract key '{key_part.strip()}' in '{part}'.")
-        key = m["key"]
-        if shape_part.strip():
-            shapes[key] = Shape.parse(shape_part)
-        if has_default:
-            defaults[key] = ast.literal_eval(raw_default.strip())
-        elif m["opt"]:
-            optional.append(key)
+    for item in parse_arg_clause(body):
+        if item.shape is not None:
+            ext = f"<{item.shape.ext}>" if item.shape.ext else ""
+            raw_label = f"{item.shape.base}{ext}{'[]' if item.shape.is_list else ''}"
+            shapes[item.key] = Shape.from_parsed(item.shape, raw_token=raw_label)
+
+        if item.has_default:
+            defaults[item.key] = item.default_value
+            if item.optional:
+                optional.append(item.key)
+        elif item.optional:
+            optional.append(item.key)
         else:
-            reqs.append(key)
+            reqs.append(item.key)
 
     return ArgSpec(reqs=tuple(reqs), defaults=defaults, optional=tuple(optional), shapes=shapes)
 
-# Python Signature Introspection Helper
+
+# =====================================================================
+# 2. Multi-Entry Header Expansion & Output Remap Semantics
+# =====================================================================
+
+def collect_header_flows(
+    head: str,
+    rewrite: Callable[[str], str] = lambda s: s,
+) -> dict[str, Any] | None:
+    """Collect `@flow:` or `@flow.<name>:` tags from a unit script header with strict exclusivity."""
+    tags = parse_header_flow_tags(head)
+    if not tags:
+        return None
+
+    has_single = any(t.entry is None for t in tags)
+    has_named = any(t.entry is not None for t in tags)
+    if has_single and has_named:
+        raise ValueError("'@flow:' and '@flow.<name>:' cannot be mixed in one header.")
+
+    if has_single:
+        if len(tags) > 1:
+            raise ValueError("Multiple unnamed '@flow:' tags are not allowed; use '@flow.<name>:'.")
+        return {"flow": rewrite(tags[0].dsl)}
+
+    named: dict[str, str] = {}
+    for t in tags:
+        assert t.entry is not None
+        if t.entry in named:
+            raise ValueError(f"Duplicate '@flow.{t.entry}:' tag at line {t.lineno}.")
+        named[t.entry] = rewrite(t.dsl)
+    return {"flows": named}
+
+
+def is_flow_meta(meta: Any) -> bool:
+    """Return True if `meta` represents a valid single-entry or multi-entry flow/unit definition."""
+    if isinstance(meta, str):
+        return bool(meta.strip())
+    if not isinstance(meta, dict):
+        return False
+    has_single = isinstance(meta.get("flow"), str) and bool(meta["flow"].strip())
+    has_multi = isinstance(meta.get("flows"), dict) and bool(meta["flows"])
+    return has_single or has_multi
+
+
+def expand_entries(name: str, meta: str | dict[str, Any]) -> Iterator[tuple[str, str, str]]:
+    """Yield `(registry_key, flow_dsl, desc)` tuples (`name` for single, `name:entry` for multi-flow)."""
+    base_name, existing_entry = split_unit_ref(name, strict=True)
+    if isinstance(meta, str):
+        full_key = f"{base_name}:{existing_entry}" if existing_entry else base_name
+        yield full_key, meta.strip(), ""
+        return
+
+    if "flow" in meta and "flows" in meta:
+        raise ValueError(f"Unit/flow '{name.strip()}' cannot declare both 'flow' and 'flows'.")
+
+    desc = str(meta.get("desc", ""))
+    if isinstance(meta.get("flows"), dict):
+        if existing_entry:
+            raise ValueError(f"Multi-entry dict cannot be nested under already-qualified name '{name}'.")
+        if not meta["flows"]:
+            raise ValueError(f"Unit '{base_name}' declares an empty 'flows' mapping.")
+        for entry, spec in meta["flows"].items():
+            ref_base, ref_entry = split_unit_ref(f"{base_name}:{entry}", strict=True)
+            yield f"{ref_base}:{ref_entry}", str(spec).strip(), desc
+    elif "flow" in meta:
+        full_key = f"{base_name}:{existing_entry}" if existing_entry else base_name
+        yield full_key, str(meta["flow"]).strip(), desc
+    else:
+        raise ValueError(f"Invalid flow metadata for '{name}': expected 'flow' or 'flows'.")
+
+
+def remap_out_keys(out_keys: tuple[str, ...], remap: dict[str, str]) -> tuple[str, ...]:
+    """Replace remapped `out_keys` with their new context variable names while preserving order."""
+    if not remap:
+        return out_keys
+    if missing := set(remap.values()) - set(out_keys):
+        raise KeyError(f"Output remap refers to undeclared out keys: {sorted(missing)}")
+    replaced_olds = set(remap.values())
+    kept = [k for k in out_keys if k not in replaced_olds]
+    added = [new_k for new_k in remap if new_k not in kept]
+    return tuple([*kept, *added])
+
+
+def remap_of(params: dict[str, Any]) -> dict[str, str]:
+    """Extract output `remap` mapping from ASL `__fiber_extensions.Projection`."""
+    ext = params.get("__fiber_extensions")
+    proj = ext.get("Projection") if isinstance(ext, dict) else None
+    return dict(proj.get(REMAP_KEY) or {}) if isinstance(proj, dict) else {}
+
+
+def rename_result(out: Any, remap: dict[str, str]) -> Any:
+    """Rename raw unit output keys per `remap` (`new_var -> out_key`) while preserving untouched keys."""
+    if not remap or not isinstance(out, dict):
+        return out
+    replaced_olds = set(remap.values())
+    res = {k: v for k, v in out.items() if k not in replaced_olds}
+    for new_k, old_k in remap.items():
+        if old_k in out:
+            res[new_k] = out[old_k]
+    return res
+
+
+# =====================================================================
+# 3. Contract Models & Signature Introspection
+# =====================================================================
+
 def infer_input_keys(fn: Any, schema: type[Any] | None = None) -> tuple[str, ...]:
     """Extract expected input keys from a TypedDict/dataclass schema or Python callable parameters."""
     if schema is not None:
@@ -185,11 +280,11 @@ def infer_input_keys(fn: Any, schema: type[Any] | None = None) -> tuple[str, ...
                     return tuple(sub_hints.keys())
             return ()
         return tuple(
-            p.name for p in params
-            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+            p.name for p in params if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
         )
     except (ValueError, TypeError):
         return ()
+
 
 @dataclass(frozen=True, slots=True)
 class UnitContract:
@@ -279,6 +374,7 @@ class UnitContract:
 @dataclass(frozen=True, slots=True)
 class StepSpec:
     """Single step token inside a FlowContract chain."""
+
     name: str
     heal_target: str | None = None
     heal_mode: str = "retry"  # 'retry' (!unit) | 'fallback' (!>unit)
@@ -286,6 +382,7 @@ class StepSpec:
     bindings: dict[str, str] = field(default_factory=dict)  # dst -> src
     each_item: str | None = None
     each_over: str | None = None
+    remap: dict[str, str] = field(default_factory=dict)  # new_var -> out_key
 
     @property
     def is_each(self) -> bool:
@@ -315,8 +412,17 @@ class FlowContract:
         return f"flow://{self.name}"
 
     def cfg_for(self, step_name: str) -> dict[str, Any]:
-        prefix = f"{step_name}."
-        return {k[len(prefix):]: v for k, v in self.cfg_values.items() if k.startswith(prefix)}
+        resolved: dict[str, Any] = {}
+        if ":" in step_name:
+            base_prefix = f"{step_name.split(':', 1)[0]}."
+            resolved.update(
+                {k[len(base_prefix) :]: v for k, v in self.cfg_values.items() if k.startswith(base_prefix)}
+            )
+        exact_prefix = f"{step_name}."
+        resolved.update(
+            {k[len(exact_prefix) :]: v for k, v in self.cfg_values.items() if k.startswith(exact_prefix)}
+        )
+        return resolved
 
     @classmethod
     def with_specs(
@@ -356,11 +462,13 @@ class CompiledTask:
     next_state: str
     catch_state: str | None
 
+
 @dataclass(frozen=True, slots=True)
 class CompiledChoice:
     name: str
     rules: tuple[tuple[dict[str, Any], str], ...]
     default_state: str
+
 
 @dataclass(frozen=True, slots=True)
 class CompiledTerminal:

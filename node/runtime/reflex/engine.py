@@ -5,12 +5,12 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
-from xphi.arch.contract.reflex.flow import CompiledChoice, CompiledNode, CompiledTask, CompiledTerminal
-from xphi.arch.contract.reflex.fsm import ASL_CHOICE_OP_MAP, END_TOKEN, EdgeMode, NodeType, parse_resource_uri
-from xphi.arch.contract.reflex.multiflow import remap_of, rename_result
-from xphi.arch.contract.registry.flow import FlowDSL, FlowRegistry, load_sample_registry
+from xphi.arch.reflex.flow import CompiledChoice, CompiledNode, CompiledTask, CompiledTerminal, remap_of, rename_result
+from xphi.arch.reflex.fsm import ASL_CHOICE_OP_MAP, END_TOKEN, EdgeMode, NodeType, parse_resource_uri
+from xphi.arch.contract.registry.flow import FlowRegistry, load_sample_registry
+from xphi.arch.reflex.compiler import compile_to_asl
 from xphi.arch.xor.fsm.compiler import FSMCompiler
-from xphi.arch.xor.fsm.parser import ASLValidationError, apply_projection, bind_parameters, eval_choice_rule, verify_asl
+from xphi.arch.xor.asl.evaluator import ASLValidationError, apply_projection, bind_parameters, eval_choice_rule, verify_asl
 from xphi.node.runtime.reflex.event import EngineError, Event, EventData, State, Transition, listify
 
 DispatcherFn = Callable[[str, str, dict[str, Any]], dict[str, Any] | None]
@@ -184,7 +184,7 @@ class FlowEngine:
         registry: FlowRegistry | None = None,
     ) -> FlowEngine:
         reg = registry or load_sample_registry()
-        asl = FlowDSL.compile_to_asl(flow_name, reg)
+        asl = compile_to_asl(flow_name, reg)
         flow_defaults = reg.flows[flow_name].in_defaults if flow_name in reg.flows else {}
         return cls.from_asl(asl, dispatcher=dispatcher, validate=True, default_context=flow_defaults)
 

@@ -12,7 +12,7 @@ from xphi.arch.bound.adapter.pta import (
     PtaTransaction,
 )
 from xphi.arch.bound.adapter.state import StateAdapter
-from xphi.arch.contract.reflex.fsm import (
+from xphi.arch.reflex.fsm import (
     BRANCH_PREFIX,
     CAS_PREFIX,
     END_TOKEN,
