@@ -202,6 +202,24 @@ class FlowEngine:
             elif isinstance(node, CompiledChoice):
                 self.add_asl_choice("step", name, node.rules, node.default_state, lambda: self.context)
 
+    @staticmethod
+    def _filter_missing_optionals(params: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+        """Omit `<key>.$` bindings declared in `Projection.optional_in` when source path is absent in `ctx`."""
+        ext = params.get("__fiber_extensions")
+        proj = ext.get("Projection") if isinstance(ext, dict) else None
+        opt_keys = set(proj.get("optional_in") or ()) if isinstance(proj, dict) else set()
+        if not opt_keys:
+            return params
+
+        filtered: dict[str, Any] = {}
+        for k, v in params.items():
+            if k.endswith(".$") and k[:-2] in opt_keys and isinstance(v, str) and v.startswith("$."):
+                root_key = v[2:].split(".", 1)[0]
+                if root_key not in ctx:
+                    continue
+            filtered[k] = v
+        return filtered
+
     def _make_task_runner(self, task: CompiledTask) -> Callable[[], None]:
         remap = remap_of(task.params)
 
@@ -209,7 +227,8 @@ class FlowEngine:
             if self._dispatcher is None:
                 raise FlowExecutionError(f"No dispatcher configured for task '{task.name}'.")
 
-            bound_params, dyn_extract, each_spec = bind_parameters(task.params, self.context)
+            eff_params = self._filter_missing_optionals(task.params, self.context)
+            bound_params, dyn_extract, each_spec = bind_parameters(eff_params, self.context)
 
             if each_spec is not None:
                 each_item, each_over = each_spec
@@ -219,7 +238,9 @@ class FlowEngine:
                 collected: dict[str, list[Any]] = {}
                 extract_keys = task.extract_keys or dyn_extract
                 for elem in items:
-                    iter_params, _, _ = bind_parameters(task.params, {**self.context, each_item: elem})
+                    iter_ctx = {**self.context, each_item: elem}
+                    iter_eff = self._filter_missing_optionals(task.params, iter_ctx)
+                    iter_params, _, _ = bind_parameters(iter_eff, iter_ctx)
                     out = rename_result(self._dispatcher(task.scheme, task.target, iter_params), remap)
                     if isinstance(out, dict):
                         if out.get("_hitl_yield") is True:
@@ -235,20 +256,29 @@ class FlowEngine:
                 return
 
             out = rename_result(self._dispatcher(task.scheme, task.target, bound_params), remap)
-            if isinstance(out, dict) and out.get("_hitl_yield") is True:
-                self.context["_hitl_yield"] = True
-                self.context["_hitl_ticket"] = out.get("_hitl_ticket", "")
-                self.context["_parked_state"] = task.name
+            if isinstance(out, dict):
+                if out.get("_hitl_yield") is True:
+                    self.context["_hitl_yield"] = True
+                    self.context["_hitl_ticket"] = out.get("_hitl_ticket", "")
+                    self.context["_parked_state"] = task.name
+                if "_summary" in out:
+                    self.context["_summary"] = out["_summary"]
             apply_projection(self.context, out, task.extract_keys or dyn_extract)
 
         return _run
 
-    def invoke(self, initial_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    def invoke(
+        self,
+        initial_context: dict[str, Any] | None = None,
+        *,
+        start_at: str | None = None,
+    ) -> dict[str, Any]:
         self.context = {**self._default_context, **(initial_context or {})}
         self.last_error = None
-        if self.initial is None:
+        entry_state = start_at if start_at is not None else self.initial
+        if entry_state is None:
             raise FlowExecutionError("FlowEngine has no initial state configured.")
-        self.set_state(self.initial)
+        self.set_state(entry_state)
 
         while not self.get_state(self.state).final:
             try:
