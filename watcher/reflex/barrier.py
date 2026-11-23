@@ -1,5 +1,4 @@
 # xphi.watcher.reflex.barrier
-## @lineage: xphi.node.runtime.fsm.barrier
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -10,7 +9,7 @@ from xphi.arch.bound.adapter.pta import (
     PtaPointer,
 )
 from xphi.arch.bound.adapter.state import StateAdapter
-from xphi.arch.contract.reflex.fsm import (
+from xphi.arch.reflex.fsm import (
     END_TOKEN,
     MAX_BLOB_BYTES,
     CompactKey,

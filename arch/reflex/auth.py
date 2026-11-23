@@ -1,9 +1,9 @@
-# xphi.arch.contract.reflex.auth
+# xphi.arch.reflex.auth
 from __future__ import annotations
 from collections.abc import Iterator
 
 from xphi.arch.contract.registry.flow import FlowRegistry
-from xphi.arch.contract.reflex.flow import ACCOUNT_SLOT, AuthReq, FlowContract, UnitContract
+from xphi.arch.reflex.flow import ACCOUNT_SLOT, AuthReq, FlowContract, UnitContract
 
 def unit_auth(unit: UnitContract) -> tuple[AuthReq, ...]:
     """Return declared requirements + derived `mcp:<server>` (ignoring bare `auth(mcp)`)."""

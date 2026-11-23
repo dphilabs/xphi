@@ -1,4 +1,4 @@
-# xphi.arch.contract.reflex.fsm
+# xphi.arch.reflex.fsm
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
