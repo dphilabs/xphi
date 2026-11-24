@@ -103,7 +103,7 @@ def _split_clause(token: str) -> tuple[str, str]:
 
 
 def _extract_trailing_recovery(expr: str) -> tuple[str, str, str | None]:
-    """Extract top-level trailing `(!unit)` or `(!>unit)` outside quotes and `[...]`."""
+    """Extract top-level trailing `(!unit)` or `(~>unit)` outside quotes and `[...]`."""
     cleaned = expr.strip()
     if not cleaned.endswith(")"):
         return cleaned, "retry", None
@@ -124,7 +124,8 @@ def _extract_trailing_recovery(expr: str) -> tuple[str, str, str | None]:
         if ch in "'\"":
             quote = ch
         elif ch in "([{":
-            if depth == 0 and ch == "(" and i + 1 < len(cleaned) and cleaned[i + 1] == "!":
+            # if depth == 0 and ch == "(" and i + 1 < len(cleaned) and cleaned[i + 1] == "!":
+            if depth == 0 and ch == "(" and cleaned.startswith(("(!", "(~>"), i):
                 open_idx = i
             depth += 1
         elif ch in ")]}":
@@ -134,9 +135,15 @@ def _extract_trailing_recovery(expr: str) -> tuple[str, str, str | None]:
         return cleaned, "retry", None
 
     head = cleaned[:open_idx].strip()
-    inner = cleaned[open_idx + 2 : -1].strip()
-    heal_mode = "fallback" if inner.startswith(">") else "retry"
-    target = inner[1:].strip() if heal_mode == "fallback" else inner
+
+    # inner = cleaned[open_idx + 2 : -1].strip()
+    # heal_mode = "fallback" if inner.startswith(">") else "retry"
+    # target = inner[1:].strip() if heal_mode == "fallback" else inner
+    is_tilde = cleaned.startswith("(~>", open_idx)
+    inner = cleaned[open_idx + (3 if is_tilde else 2) : -1].strip()
+    heal_mode = "alt" if (is_tilde or inner.startswith(">")) else "retry"
+    target = inner[1:].strip() if (not is_tilde and heal_mode == "alt") else inner
+
     if not head or not target:
         raise ValueError(f"Malformed recovery clause in '{cleaned}'.")
     split_unit_ref(target, strict=True)
