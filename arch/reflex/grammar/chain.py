@@ -90,7 +90,7 @@ def split_unit_ref(unit_ref: str, *, strict: bool = False) -> tuple[str, str]:
 def split_remap(step_expr: str) -> tuple[str, dict[str, str]]:
     """
     Extract `=> (new_var=out_key, ...)` from a step expression using lexical scanning.
-    Supports optional trailing recovery clause `(!>fallback)` or `(!retry)` after `=> (...)`.
+    Supports optional trailing recovery clause `(~>unit)` or `(!retry)` after `=> (...)`.
     """
     depth = 0
     quote = ""
@@ -147,7 +147,8 @@ def split_remap(step_expr: str) -> tuple[str, dict[str, str]]:
 
     inner = after_arrow[1:close_idx]
     trailing = after_arrow[close_idx + 1 :].strip()
-    if trailing and not trailing.startswith("(!"):
+    # if trailing and not trailing.startswith("(!"):
+    if trailing and not trailing.startswith(("(!", "(~>")):
         raise ValueError(f"Unexpected trailing token '{trailing}' after remap in '{step_expr.strip()}'.")
     if not inner.strip():
         raise ValueError(f"Empty output remap '=> ()' in '{step_expr.strip()}'.")

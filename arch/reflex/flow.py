@@ -377,7 +377,7 @@ class StepSpec:
 
     name: str
     heal_target: str | None = None
-    heal_mode: str = "retry"  # 'retry' (!unit) | 'fallback' (!>unit)
+    heal_mode: str = "retry"  # 'retry' (!unit) | 'alt' (~>unit)
     gate_expr: str | None = None
     bindings: dict[str, str] = field(default_factory=dict)  # dst -> src
     each_item: str | None = None
