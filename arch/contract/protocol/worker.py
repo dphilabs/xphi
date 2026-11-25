@@ -7,7 +7,7 @@ import asyncio
 import contextvars
 from typing import Dict, Any, Optional
 
-from xphi.arch.contract.protocol.binder import ToolBinderMixin, ToolError
+from xphi.arch.contract.protocol.binder import ToolBinder, ToolError
 
 _REAL_STDOUT = sys.stdout
 sys.stdout = sys.stderr
@@ -41,12 +41,12 @@ def _setup_json_logger(agent_name: str) -> logging.Logger:
     return logger
 
 
-class WorkerProtocol(ToolBinderMixin):
+class WorkerProtocol:
     """@desc: 레거시(동기식) 워커를 위한 베이스 클래스 - 순차적 처리 및 자동 툴 바인딩 지원"""
     def __init__(self, agent_name: str):
         self.agent_name = agent_name
         self.log = _setup_json_logger(self.agent_name)
-        self._init_tool_binder()
+        self._binder = ToolBinder(self)
 
     def _emit_rpc_message(self, message: Dict[str, Any]):
         message["jsonrpc"] = "2.0"
@@ -118,20 +118,20 @@ class WorkerProtocol(ToolBinderMixin):
 
     """Default Auto-Bound Handlers (서브클래스에서 오버라이드하지 않으면 자동 작동)"""
     def handle_tools_list(self, req_id: Any):
-        self.send_response(req_id, {"tools": self._tool_schemas})
+        self.send_response(req_id, {"tools": self._binder.tool_schemas})
 
     def handle_tools_call(self, req_id: Any, tool_name: str, arguments: Dict[str, Any], meta: Dict[str, Any]):
-        func = self._bound_tools.get(tool_name)
+        func = self._binder.bound_tools.get(tool_name)
         if not func:
             self.send_error(req_id, -32601, f"Unknown tool: {tool_name}")
             return
 
         try:
-            kwargs = self._prepare_call_kwargs(func, arguments, meta)
+            kwargs = self._binder._prepare_call_kwargs(func, arguments, meta)
             result = func(**kwargs)
-            self.send_response(req_id, self._wrap_mcp_result(result, is_error=False))
+            self.send_response(req_id, self._binder._wrap_mcp_result(result, is_error=False))
         except ToolError as te:
-            self.send_response(req_id, self._wrap_mcp_result(str(te), is_error=True))
+            self.send_response(req_id, self._binder._wrap_mcp_result(str(te), is_error=True))
         except (ValueError, TypeError, KeyError) as pe:
             self.log.warning(f"Invalid Parameters for {tool_name}: {pe}")
             self.send_error(req_id, -32602, f"Invalid params: {str(pe)}")
@@ -140,7 +140,7 @@ class WorkerProtocol(ToolBinderMixin):
             self.send_error(req_id, -32000, str(e))
 
 
-class AsyncWorkerProtocol(ToolBinderMixin):
+class AsyncWorkerProtocol:
     """@desc: 모던(비동기) 워커를 위한 베이스 클래스 - 코루틴 라우팅, Non-blocking I/O 및 자동 툴 바인딩 지원"""
     def __init__(self, agent_name: str):
         self.agent_name = agent_name
@@ -149,7 +149,7 @@ class AsyncWorkerProtocol(ToolBinderMixin):
         self._stdout_lock = asyncio.Lock()
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
-        self._init_tool_binder()
+        self._binder = ToolBinder(self)
 
     async def _initialize_streams(self):
         loop = asyncio.get_running_loop()
@@ -241,22 +241,22 @@ class AsyncWorkerProtocol(ToolBinderMixin):
 
     """Default Auto-Bound Async Handlers"""
     async def handle_tools_list(self, req_id: Any):
-        await self.send_response(req_id, {"tools": self._tool_schemas})
+        await self.send_response(req_id, {"tools": self._binder.tool_schemas})
 
     async def handle_tools_call(self, req_id: Any, tool_name: str, arguments: Dict[str, Any], meta: Dict[str, Any]):
-        func = self._bound_tools.get(tool_name)
+        func = self._binder.bound_tools.get(tool_name)
         if not func:
             await self.send_error(req_id, -32601, f"Method not found: Unknown tool '{tool_name}'")
             return
 
         try:
-            kwargs = self._prepare_call_kwargs(func, arguments, meta)
+            kwargs = self._binder._prepare_call_kwargs(func, arguments, meta)
             result = func(**kwargs)
             if inspect.isawaitable(result):
                 result = await result
-            await self.send_response(req_id, self._wrap_mcp_result(result, is_error=False))
+            await self.send_response(req_id, self._binder._wrap_mcp_result(result, is_error=False))
         except ToolError as te:
-            await self.send_response(req_id, self._wrap_mcp_result(str(te), is_error=True))
+            await self.send_response(req_id, self._binder._wrap_mcp_result(str(te), is_error=True))
         except (ValueError, TypeError, KeyError) as pe:
             self.log.warning(f"Invalid Parameters for {tool_name}: {pe}")
             await self.send_error(req_id, -32602, f"Invalid params: {str(pe)}")
