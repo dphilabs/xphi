@@ -190,7 +190,7 @@ def resolve_fixture_dir(
                 return sub
     return find_unit_root().joinpath(*parts)
 
-# fiber.node.runbook.harness.suite 내 run_fixture_suite 핵심 변경부
+
 def run_fixture_suite(
     fixture_dir: Path,
     runners: CaseRunner | Mapping[str, CaseRunner],
@@ -215,22 +215,39 @@ def run_fixture_suite(
             failures.append(f"{rel_key}.json: invalid JSON at line {exc.lineno}: {exc.msg}")
             continue
 
-        runner = runners if callable(runners) else (runners.get(rel_key) or runners.get(path.stem))
-        if runner is None:
-            expected = sorted(runners) if isinstance(runners, Mapping) else []
-            failures.append(f"{rel_key}.json: no runner bound for {rel_key!r} (expected: {expected})")
+        base_defaults = data.get("defaults") or {}
+        if "suites" not in data:
+            sections: list[tuple[str, str, Any]] = [(rel_key, path.stem, data)]
+        elif isinstance(raw_suites := data["suites"], Mapping):
+            parent = ".".join(rel_parts[:-1])
+            sections = [(f"{parent}.{k}" if parent else k, k, sec) for k, sec in raw_suites.items()]
+        else:
+            failures.append(f"{rel_key}.json: 'suites' must be a mapping")
             continue
 
-        defaults = data.get("defaults") or {}
-        for idx, raw_case in enumerate(data.get("cases", ())):
-            case = {**defaults, **raw_case}
-            case_id = f"{rel_key}.{case.get('id', f'case_{idx}')}"
-            if case_filter and case_filter not in case_id:
+        for sec_key, short_key, sec in sections:
+            runner = runners if callable(runners) else (runners.get(sec_key) or runners.get(short_key))
+            if runner is None:
+                expected = sorted(runners) if isinstance(runners, Mapping) else []
+                failures.append(f"{rel_key}.json: no runner bound for {sec_key!r} (expected: {expected})")
                 continue
-            try:
-                scenarios[case_id] = runner(case, data)
-            except Exception as exc:
-                failures.append(f"{case_id}: {type(exc).__name__}: {exc}")
+
+            if isinstance(sec, Mapping):
+                defaults = base_defaults if sec is data else {**base_defaults, **(sec.get("defaults") or {})}
+                cases = sec.get("cases", ())
+                ctx = data if sec is data else {**data, **{k: v for k, v in sec.items() if k not in ("cases", "defaults")}}
+            else:
+                defaults, cases, ctx = base_defaults, sec, data
+
+            for idx, raw_case in enumerate(cases):
+                case = {**defaults, **raw_case}
+                case_id = f"{sec_key}.{case.get('id', f'case_{idx}')}"
+                if case_filter and case_filter not in case_id:
+                    continue
+                try:
+                    scenarios[case_id] = runner(case, ctx)
+                except Exception as exc:
+                    failures.append(f"{case_id}: {type(exc).__name__}: {exc}")
 
     if failures:
         raise error_cls(f"{len(failures)} fixture case(s) failed:\n  - " + "\n  - ".join(failures))
