@@ -4,16 +4,22 @@ from __future__ import annotations
 import inspect
 import json
 import re
-from typing import Any, Callable, Dict, List, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Any, Callable, Dict, List, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 _PARAM_DOC_RE = re.compile(
     r"^(?:[:@]param\s+|-\s*|\*\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\([^)]*\))?\s*:\s*(.+)$"
 )
 
-
 class ToolError(Exception):
     """MCP 콘텐츠 레벨 에러 (isError: True 반환용)"""
     pass
+
+def tool(func: Optional[Callable] = None, *, name: Optional[str] = None) -> Callable:
+    """메서드에 MCP 툴 메타데이터만 마킹하는 데코레이터 (`@tool` 및 `@tool(name="...")` 지원)"""
+    def decorator(fn: Callable) -> Callable:
+        setattr(fn, "__mcp_tool_name__", name or fn.__name__.removeprefix("tool_"))
+        return fn
+    return decorator(func) if func is not None else decorator
 
 
 def _parse_docstring(doc: str) -> tuple[str, Dict[str, str]]:
@@ -71,21 +77,31 @@ def _py_type_to_json_schema(py_type: Any) -> Dict[str, Any]:
     }.get(py_type, {"type": "string"}))
 
 
-class ToolBinderMixin:
-    """`tool_<name>` 메서드의 시그니처와 독스트링만으로 MCP 스키마/디스패치를 자동 완성하는 Mixin"""
+class ToolBinder:
+    """`@tool` 데코레이터 또는 레거시 `tool_<name>` 메서드를 스캔해 스키마/디스패치를 구성하는 바인더"""
 
-    def _init_tool_binder(self) -> None:
-        self._bound_tools: Dict[str, Callable] = {}
-        self._tool_schemas: List[Dict[str, Any]] = []
+    def __init__(self, target: Any) -> None:
+        self.bound_tools: Dict[str, Callable] = {}
+        self.tool_schemas: List[Dict[str, Any]] = []
 
-        for attr_name in dir(self):
-            if not attr_name.startswith("tool_"):
+        for attr_name in dir(target):
+            if attr_name.startswith("_"):
                 continue
-            member = getattr(self, attr_name, None)
-            if callable(member):
+            member = getattr(target, attr_name, None)
+            if not callable(member):
+                continue
+
+            explicit_name = getattr(member, "__mcp_tool_name__", None)
+            if explicit_name:
+                tool_name = explicit_name
+            elif attr_name.startswith("tool_"):
                 tool_name = attr_name[5:]
-                self._bound_tools[tool_name] = member
-                self._tool_schemas.append(self._build_tool_schema(tool_name, member))
+            else:
+                continue
+
+            if tool_name not in self.bound_tools:
+                self.bound_tools[tool_name] = member
+                self.tool_schemas.append(self._build_tool_schema(tool_name, member))
 
     def _build_tool_schema(self, tool_name: str, func: Callable) -> Dict[str, Any]:
         sig = inspect.signature(func)
