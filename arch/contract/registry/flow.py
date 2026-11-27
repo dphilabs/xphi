@@ -1,8 +1,4 @@
 # xphi.arch.contract.registry.flow
-"""
-In-memory `UnitContract` / `FlowContract` registry and quote-safe chain DSL parser.
-ASL IR lowering lives separately in `xphi.arch.contract.reflex.compiler`.
-"""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -135,10 +131,6 @@ def _extract_trailing_recovery(expr: str) -> tuple[str, str, str | None]:
         return cleaned, "retry", None
 
     head = cleaned[:open_idx].strip()
-
-    # inner = cleaned[open_idx + 2 : -1].strip()
-    # heal_mode = "fallback" if inner.startswith(">") else "retry"
-    # target = inner[1:].strip() if heal_mode == "fallback" else inner
     is_tilde = cleaned.startswith("(~>", open_idx)
     inner = cleaned[open_idx + (3 if is_tilde else 2) : -1].strip()
     heal_mode = "alt" if (is_tilde or inner.startswith(">")) else "retry"
@@ -148,7 +140,6 @@ def _extract_trailing_recovery(expr: str) -> tuple[str, str, str | None]:
         raise ValueError(f"Malformed recovery clause in '{cleaned}'.")
     split_unit_ref(target, strict=True)
     return head, heal_mode, target
-
 
 def _parse_input_bindings(base: str, full_token: str) -> tuple[str, dict[str, str]]:
     if "[" not in base:
@@ -178,11 +169,6 @@ def _parse_input_bindings(base: str, full_token: str) -> tuple[str, dict[str, st
             raise ValueError(f"Duplicate input binding '{dst_s}' in step '{full_token}'.")
         bindings[dst_s] = src_s
     return unit_name, bindings
-
-
-# =====================================================================
-# 2. Unit & Flow Chain DSL Parsers
-# =====================================================================
 
 def parse_unit_dsl(name: str, spec_str: str, desc: str = "") -> UnitContract:
     ins, cfgs, outs = ArgSpec(), ArgSpec(), ArgSpec()
@@ -286,17 +272,10 @@ def parse_flow_dsl(name: str, flow_str: str, desc: str = "") -> FlowContract:
         name.strip(), tuple(steps), desc, ins=ins, outs=outs, cfg_values=cfg_values
     )
 
-
-# =====================================================================
-# 3. Contract Registry & Lazy Legacy Sample Loader
-# =====================================================================
-
 def sample_flow_path() -> Path:
     """Resolve legacy `compats/flow/sample.json` lazily without import-time side effects."""
     from xphi.node.space.bind.resolver import resolve_path
-
     return resolve_path("compats") / "flow" / "sample.json"
-
 
 class FlowRegistry:
     """In-memory catalog of atomic `UnitContract` and composite `FlowContract` specs."""
@@ -362,10 +341,8 @@ class FlowRegistry:
             c.out_optional,
         )
 
-
 def load_sample_registry(path: str | Path | None = None) -> FlowRegistry:
     return FlowRegistry().load_json(path)
-
 
 def __getattr__(attr: str) -> Any:
     if attr == "SAMPLE_PATH":
