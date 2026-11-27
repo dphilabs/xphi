@@ -7,7 +7,7 @@ from typing import Any
 
 from xphi.arch.reflex.flow import CompiledChoice, CompiledNode, CompiledTask, CompiledTerminal, remap_of, rename_result
 from xphi.arch.reflex.fsm import ASL_CHOICE_OP_MAP, END_TOKEN, EdgeMode, NodeType, parse_resource_uri
-from xphi.arch.contract.registry.flow import FlowRegistry, load_sample_registry
+from xphi.arch.contract.registry.flow import FlowRegistry
 from xphi.arch.reflex.compiler import compile_to_asl
 from xphi.arch.xor.fsm.compiler import FSMCompiler
 from xphi.arch.xor.asl.evaluator import ASLValidationError, apply_projection, bind_parameters, eval_choice_rule, verify_asl
@@ -183,7 +183,8 @@ class FlowEngine:
         dispatcher: DispatcherFn,
         registry: FlowRegistry | None = None,
     ) -> FlowEngine:
-        reg = registry or load_sample_registry()
+        reg = registry
+        if registry is None: raise ValueError("Explicit FlowRegistry is required.")
         asl = compile_to_asl(flow_name, reg)
         flow_defaults = reg.flows[flow_name].in_defaults if flow_name in reg.flows else {}
         return cls.from_asl(asl, dispatcher=dispatcher, validate=True, default_context=flow_defaults)
