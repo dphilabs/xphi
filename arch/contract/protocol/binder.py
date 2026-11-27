@@ -16,10 +16,7 @@ _PARAM_DOC_RE = re.compile(
     r"^(?:[:@]param\s+|-\s*|\*\s*)?([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\([^)]*\))?\s*:\s*(.+)$"
 )
 _ARGS_HEADERS = frozenset({"args:", "arguments:", "parameters:", "params:"})
-# Headers that close an Args block (Google / NumPy style).
-_SECTION_HEADERS = frozenset({
-    "returns:", "return:", "yields:", "raises:", "examples:", "example:", "notes:", "note:", "see also:",
-})
+_SECTION_HEADERS = frozenset({"returns:", "return:", "yields:", "raises:", "examples:", "example:", "notes:", "note:", "see also:"})
 _SPHINX_PREFIXES = (":", "@", "-", "*")
 _META_PARAMS = frozenset({"meta", "_meta"})
 _UNION_ORIGINS = (Union, types.UnionType)  # typing.Optional[X] and PEP 604 `X | None`
@@ -37,9 +34,6 @@ def tool(func: Optional[Callable] = None, *, name: Optional[str] = None) -> Call
         setattr(fn, "__mcp_tool_name__", name or fn.__name__.removeprefix("tool_"))
         return fn
     return decorator(func) if func is not None else decorator
-
-
-# --------------------------------------------------------------------------- docstring
 
 def _parse_docstring(doc: str) -> tuple[str, Dict[str, str]]:
     """Extract (summary, {param: description}) from a Google / Sphinx / NumPy-ish docstring."""
@@ -67,8 +61,6 @@ def _parse_docstring(doc: str) -> tuple[str, Dict[str, str]]:
             continue
 
         indent = len(raw_line) - len(raw_line.lstrip())
-
-        # Indented line under a param: continuation of its description.
         if last is not None and indent > last_indent:
             param_descs[last] += " " + line
             continue
