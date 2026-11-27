@@ -263,7 +263,10 @@ def parse_flow_dsl(name: str, flow_str: str, desc: str = "") -> FlowContract:
                 raise ValueError(f"Flow '{name}': 'out(...)' must be the final clause.")
             outs = parse_annotated_args(_split_clause(tok)[1])
         else:
-            steps.append(parse_step_dsl(tok))
+            try:
+                steps.append(parse_step_dsl(tok))
+            except ValueError as exc:
+                raise ValueError(f"Flow '{name}': {exc}") from exc
 
     if not steps:
         raise ValueError(f"Flow '{name}' must contain at least one execution step.")
@@ -273,9 +276,9 @@ def parse_flow_dsl(name: str, flow_str: str, desc: str = "") -> FlowContract:
     )
 
 def sample_flow_path() -> Path:
-    """Resolve legacy `compats/flow/sample.json` lazily without import-time side effects."""
-    from xphi.node.space.bind.resolver import resolve_path
-    return resolve_path("compats") / "flow" / "sample.json"
+    """Resolve `reflexor/fixtures/flowdsl/sample.json` lazily for contract test suites."""
+    from xphi.arch.reflex.unit.scanner import find_unit_root
+    return find_unit_root() / "fixtures" / "flowdsl" / "sample.json"
 
 class FlowRegistry:
     """In-memory catalog of atomic `UnitContract` and composite `FlowContract` specs."""
@@ -308,9 +311,8 @@ class FlowRegistry:
                     register_fn(key, spec, desc)
         return self
 
-    def load_json(self, path: str | Path | None = None) -> FlowRegistry:
-        target = Path(path) if path is not None else sample_flow_path()
-        raw = json.loads(target.read_text(encoding="utf-8"))
+    def load_json(self, path: str | Path) -> FlowRegistry:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
         return self.load_dict(raw)
 
     def resolve_io(self, name: str) -> tuple[str, tuple[str, ...], dict[str, Any], tuple[str, ...]]:
@@ -342,7 +344,8 @@ class FlowRegistry:
         )
 
 def load_sample_registry(path: str | Path | None = None) -> FlowRegistry:
-    return FlowRegistry().load_json(path)
+    target = Path(path) if path is not None else sample_flow_path()
+    return FlowRegistry().load_json(target)
 
 def __getattr__(attr: str) -> Any:
     if attr == "SAMPLE_PATH":
